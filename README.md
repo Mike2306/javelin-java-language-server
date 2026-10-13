@@ -13,6 +13,11 @@ is there.
 > [`docs/manual-testing-zed.md`](docs/manual-testing-zed.md). See
 > [the roadmap](docs/roadmap.md) for what is deliberately out.
 
+> **Disclaimer: this project is heavily coded by [Claude Code](https://www.anthropic.com/claude-code).**
+> Most of the code, tests and documentation were written by an AI coding
+> assistant under human direction and review. Treat it accordingly: read the
+> code before relying on it, and report what you find.
+
 ## Quick start in Zed
 
 You need Rust (the toolchain is pinned in `rust-toolchain.toml`; `rustup`
