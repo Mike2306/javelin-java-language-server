@@ -1,0 +1,3 @@
+# A language server holds large snapshots; flag accidental large-value copies early.
+too-many-arguments-threshold = 8
+type-complexity-threshold = 300

@@ -1,0 +1,67 @@
+[package]
+name = "javelin-integration-tests"
+description = "Cross-crate and LSP-level integration tests"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[lib]
+path = "support.rs"
+
+[[test]]
+name = "lsp_lifecycle"
+path = "integration/lsp_lifecycle.rs"
+
+[[test]]
+name = "document_pipeline"
+path = "integration/document_pipeline.rs"
+
+[[test]]
+name = "incremental_reparse"
+path = "integration/incremental_reparse.rs"
+
+[[test]]
+name = "syntax_view"
+path = "integration/syntax_view.rs"
+
+[[test]]
+name = "scopes"
+path = "integration/scopes.rs"
+
+[[test]]
+name = "definition_and_hover"
+path = "integration/definition_and_hover.rs"
+
+[[test]]
+name = "completion"
+path = "integration/completion.rs"
+
+[[test]]
+name = "member_resolution"
+path = "integration/member_resolution.rs"
+
+[[test]]
+name = "external_definition"
+path = "integration/external_definition.rs"
+
+[dependencies]
+javelin-core.workspace = true
+javelin-document.workspace = true
+javelin-parser.workspace = true
+javelin-server.workspace = true
+lsp-server = "0.10.0"
+lsp-types = "0.97.0"
+serde_json.workspace = true
+
+[dev-dependencies]
+# Test-only: the one test that lets the classpath read run builds the `src.zip`
+# it reads. Nothing in the workspace's own code reads a zip outside
+# `javelin-classpath`.
+zip.workspace = true

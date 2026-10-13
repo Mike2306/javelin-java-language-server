@@ -1,0 +1,27 @@
+# Rust. Unanchored: the Zed extension is its own workspace with its own target/.
+target/
+**/*.rs.bk
+
+# Benchmark output. Criterion's baselines are local state; committing them would
+# make every machine's noise look like a regression.
+/target/criterion/
+/benchmarks/results/
+
+# Zed builds the extension in place when installing it as a dev extension.
+extensions/zed/extension.wasm
+
+# Node (editor extensions)
+node_modules/
+extensions/vscode/out/
+*.vsix
+
+# Editors and OS
+.idea/
+.vscode/
+*.iml
+.DS_Store
+
+# Local overrides
+.env
+.cargo/config.local.toml
+

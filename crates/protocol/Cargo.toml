@@ -1,0 +1,18 @@
+[package]
+name = "javelin-protocol"
+description = "Editor-agnostic request/response contract between the LSP layer and the engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+javelin-core.workspace = true
+serde.workspace = true
+
+[dev-dependencies]

@@ -1,0 +1,15 @@
+id = "javelin"
+name = "Javelin Java"
+version = "0.0.1"
+schema_version = 1
+authors = ["Javelin contributors"]
+description = "Fast Java language support powered by the Javelin language server"
+repository = "https://github.com/Mike2306/javelin-java-language-server"
+
+# Javelin contributes a language *server*, not a language. Zed's Java extension
+# already provides the grammar and highlighting; defining a second "Java"
+# language here would collide with it and duplicate a grammar we do not
+# maintain. Install that extension alongside this one.
+[language_servers.javelin]
+name = "Javelin"
+languages = ["Java"]

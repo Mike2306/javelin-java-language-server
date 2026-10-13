@@ -1,0 +1,19 @@
+[package]
+name = "javelin-semantic"
+description = "Java types, scopes and symbol resolution over the files a query can reach"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+javelin-core.workspace = true
+javelin-document.workspace = true
+javelin-parser.workspace = true
+
+[dev-dependencies]

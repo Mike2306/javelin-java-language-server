@@ -1,0 +1,9 @@
+# Task shortcuts. Cargo aliases rather than a Makefile or justfile: they need no
+# extra tooling and work identically on Windows.
+#
+# The full gate is `scripts/check.sh`, which is exactly
+# what CI runs.
+[alias]
+c = "check --workspace --all-targets"
+lint = "clippy --workspace --all-targets -- -D warnings"
+t = "test --workspace --all-targets"

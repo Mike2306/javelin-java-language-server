@@ -1,0 +1,32 @@
+[package]
+name = "javelin"
+description = "Javelin Java language server command-line entry point"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "javelin"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow.workspace = true
+clap = { version = "4.6.6", features = ["derive"] }
+javelin-build.workspace = true
+javelin-core.workspace = true
+javelin-document.workspace = true
+javelin-parser.workspace = true
+javelin-server.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+# Test-only: the synthetic JDK fixture builds the `src.zip` the classpath reads.
+# `tests/Cargo.toml` carries it for the same reason.
+zip.workspace = true

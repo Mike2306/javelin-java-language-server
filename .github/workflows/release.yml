@@ -1,0 +1,55 @@
+name: Release
+
+# Builds the server binary for each supported platform and attaches it to a tag.
+# Deliberately minimal: no installers, no signing, no editor-extension packaging
+# yet. Those get added when there is something worth installing.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest,  target: x86_64-unknown-linux-gnu,  archive: tar.gz }
+          - { os: ubuntu-latest,  target: aarch64-unknown-linux-gnu, archive: tar.gz }
+          - { os: macos-latest,   target: x86_64-apple-darwin,       archive: tar.gz }
+          - { os: macos-latest,   target: aarch64-apple-darwin,      archive: tar.gz }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc,    archive: zip }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install cross-linker
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+
+      - run: cargo build --release -p javelin --target ${{ matrix.target }}
+
+      - name: Package (unix)
+        if: matrix.archive == 'tar.gz'
+        run: tar -czf javelin-${{ matrix.target }}.tar.gz -C target/${{ matrix.target }}/release javelin
+
+      - name: Package (windows)
+        if: matrix.archive == 'zip'
+        run: Compress-Archive -Path target/${{ matrix.target }}/release/javelin.exe -DestinationPath javelin-${{ matrix.target }}.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: javelin-${{ matrix.target }}
+          path: javelin-${{ matrix.target }}.*

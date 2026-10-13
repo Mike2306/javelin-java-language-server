@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  # Formatting and lints are platform-independent, so they run once rather than
+  # three times.
+  lint:
+    name: Format and Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      # `startup_does_not_wait_for_the_classpath` in `crates/cli/tests/` needs
+      # a JDK with `lib/src.zip`: with none there is no `src.zip` read to still
+      # be in flight at shutdown, and the test panics rather than passing
+      # quietly. That dependency used to be met only because the runner image
+      # happens to preinstall a JDK, so a `JAVA_HOME` pointing at a JRE or a
+      # jlink'd image turned CI red with what read like a product bug. Temurin
+      # ships `lib/src.zip`; a distribution that does not would not do.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --workspace --all-targets
+      - name: Unit and integration tests
+        run: cargo test --workspace --all-targets
+
+  docs:
+    name: Docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo doc --workspace --no-deps --document-private-items
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  # Compiles the benchmarks without running them. Benchmark numbers from a shared
+  # CI runner are noise; this only guards against the harness rotting.
+  benchmarks:
+    name: Benchmarks compile
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo bench -p javelin-benchmarks --no-run

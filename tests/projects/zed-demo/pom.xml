@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Present so build-system detection has something to find. Never actually built. -->
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>com.example</groupId>
+  <artifactId>javelin-zed-demo</artifactId>
+  <version>0.0.1</version>
+  <properties>
+    <maven.compiler.release>21</maven.compiler.release>
+  </properties>
+</project>

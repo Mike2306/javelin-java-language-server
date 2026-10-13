@@ -1,0 +1,22 @@
+[package]
+name = "javelin-index"
+description = "Persistent workspace index and on-disk cache"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+javelin-core.workspace = true
+javelin-classpath.workspace = true
+javelin-document.workspace = true
+javelin-parser.workspace = true
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+tracing.workspace = true
+
+[dev-dependencies]

@@ -1,0 +1,33 @@
+[package]
+name = "javelin-server"
+description = "LSP transport, lifecycle, request routing and scheduling"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+crossbeam-channel.workspace = true
+javelin-build.workspace = true
+javelin-classpath.workspace = true
+javelin-core.workspace = true
+javelin-document.workspace = true
+javelin-index.workspace = true
+javelin-parser.workspace = true
+javelin-protocol.workspace = true
+javelin-semantic.workspace = true
+lsp-server = "0.10.0"
+lsp-types = "0.97.0"
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+# Test-only: the extraction tests build a `src.zip` to extract from. Nothing
+# in the server reads a zip — `javelin-classpath` owns that.
+zip.workspace = true

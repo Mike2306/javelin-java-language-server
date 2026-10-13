@@ -1,0 +1,15 @@
+# Deliberately outside the main workspace: Zed extensions compile to
+# wasm32-wasip2, which would force that target on every crate in the workspace.
+[workspace]
+
+[package]
+name = "javelin-zed"
+version = "0.0.1"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+zed_extension_api = "0.7"

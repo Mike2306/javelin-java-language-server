@@ -1,0 +1,3 @@
+# Written per machine; it needs an absolute path to your build.
+# See docs/manual-testing-zed.md.
+.zed/

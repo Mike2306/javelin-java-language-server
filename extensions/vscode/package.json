@@ -1,0 +1,54 @@
+{
+  "name": "javelin-java",
+  "displayName": "Javelin Java",
+  "description": "Fast Java language support powered by the Javelin language server",
+  "version": "0.0.1",
+  "private": true,
+  "publisher": "javelin",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onLanguage:java"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "Javelin",
+      "properties": {
+        "javelin.serverPath": {
+          "type": "string",
+          "default": "javelin",
+          "description": "Path to the javelin executable."
+        },
+        "javelin.logging.level": {
+          "type": "string",
+          "enum": ["error", "warn", "info", "debug", "trace"],
+          "default": "info",
+          "description": "Server log verbosity."
+        },
+        "javelin.index.backgroundIndexing": {
+          "type": "boolean",
+          "default": true,
+          "description": "Index the workspace in the background after startup."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5.5.0"
+  }
+}

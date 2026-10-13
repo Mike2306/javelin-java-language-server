@@ -1,0 +1,81 @@
+[package]
+name = "javelin-benchmarks"
+description = "Latency and throughput benchmarks for the Javelin language server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+javelin-core.workspace = true
+javelin-document.workspace = true
+javelin-parser.workspace = true
+javelin-semantic.workspace = true
+javelin-server.workspace = true
+lsp-server = "0.10.0"
+lsp-types = "0.97.0"
+serde_json.workspace = true
+
+[dev-dependencies]
+criterion = "0.8.2"
+# `definition.rs` builds a synthetic `src.zip` and reads one entry back out of
+# it, which is what a jump into the JDK's own sources costs.
+javelin-classpath.workspace = true
+# `workspace_index.rs` indexes a generated tree of source files, which is the
+# store this crate otherwise has no reason to know about.
+javelin-index.workspace = true
+zip.workspace = true
+
+[[bench]]
+name = "parsing"
+harness = false
+
+[[bench]]
+name = "documents"
+harness = false
+
+[[bench]]
+name = "startup"
+harness = false
+
+[[bench]]
+name = "completion"
+harness = false
+
+[[bench]]
+name = "loop_latency"
+harness = false
+
+[[bench]]
+name = "definition"
+harness = false
+
+[[bench]]
+name = "overload_elimination"
+harness = false
+
+[[bench]]
+name = "workspace_index"
+harness = false
+
+[[bench]]
+name = "semantic_tokens"
+harness = false
+
+[[bench]]
+name = "references"
+harness = false
+
+[[bench]]
+name = "dependencies"
+harness = false
+
+[[bench]]
+name = "inlay_hints"
+harness = false

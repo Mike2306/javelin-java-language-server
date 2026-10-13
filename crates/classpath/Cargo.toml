@@ -1,0 +1,19 @@
+[package]
+name = "javelin-classpath"
+description = "JDK discovery and type facts from src.zip; no JAR/class-file reader"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+javelin-core.workspace = true
+javelin-document.workspace = true
+javelin-parser.workspace = true
+tracing.workspace = true
+zip.workspace = true

@@ -1,0 +1,22 @@
+[package]
+name = "javelin-core"
+description = "Shared domain types, configuration, errors, cancellation and tracing setup"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+dirs = "6.0.0"
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+
+[dev-dependencies]
