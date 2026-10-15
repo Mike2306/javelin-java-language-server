@@ -93,7 +93,11 @@ Other settings, all under `initialization_options`, camelCase: `jdk.home` (a
 JDK other than the discovered one), `index.cacheDir`,
 `index.maxFileSizeBytes` (lowering it below the 2 MiB default turns
 diagnostics off, since a skipped file could declare any name),
-`diagnostics.enabled` and `diagnostics.debounceMs`. A misspelt key is
+`diagnostics.enabled` and `diagnostics.debounceMs`, and `format.command` — a
+formatter's argv reading stdin and writing stdout, such as
+`["google-java-format", "-"]`, run in the file's directory, which turns on
+format-document; there is none by default, because Javelin has no opinion on
+layout — with `format.timeoutMs` (10 000 by default). A misspelt key is
 ignored silently, and a value of the wrong type resets *every* setting to its
 default with only a log warning — check the log after changing them. The log
 level is a command-line flag: `"arguments": ["serve", "--log-level",
@@ -153,7 +157,7 @@ major dependency choices is in [docs/adr/](docs/adr/).
 
 ## What works today
 
-Reading, not writing. What each request answers, and every refusal it makes
+Reading first, and a few writes where an edit can be proved whole. What each request answers, and every refusal it makes
 on purpose, is in [the roadmap](docs/roadmap.md); the short form:
 
 | | |
@@ -165,7 +169,10 @@ on purpose, is in [the roadmap](docs/roadmap.md); the short form:
 | ✅ | Parameter-name and type inlay hints, and Javadoc in hover |
 | ✅ | Lombok's generated members, and annotation-processor, protobuf, OpenAPI and jOOQ output |
 | ✅ | A background workspace index that follows saves, edits and `git checkout`s |
-| ⬜ | Rename, code actions, auto-import, formatting — out of the first release |
+| ✅ | Rename of a variable, and of a field, method, enum constant or top-level class across the workspace, its file with it — refused, with the reason, wherever a use could be missed |
+| ✅ | Add-import quick fix on an unresolved type — one action per importable type of that name |
+| ✅ | Remove unused imports (`source.organizeImports`) — only an import whose name is written nowhere else |
+| ✅ | Formatting through the formatter `format.command` names — none is built in |
 
 ## Performance philosophy
 

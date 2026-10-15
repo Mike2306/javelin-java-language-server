@@ -33,7 +33,7 @@
 //!
 //! ponytail: what is not generated is a missing member — `@CustomLog`'s
 //! field, a static constructor, `@Delegate`, `@ExtensionMethod`,
-//! `@SuperBuilder`'s `$` methods, Guava's `@Singular` recipes,
+//! `@SuperBuilder`'s `$fillValuesFromInstanceIntoBuilder`, Guava's `@Singular` recipes,
 //! `@FieldNameConstants`, a `@Builder` or a `@Singular` on a constructor or a
 //! method, and the
 //! `lombok.config` keys that rename what is generated, which the walk detects

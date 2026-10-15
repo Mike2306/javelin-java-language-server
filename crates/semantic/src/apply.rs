@@ -26,12 +26,13 @@
 //! arguments, so `Box<Foo>` and `Box<Bar>`
 //! are one declaration; a variadic candidate's tail; a poly expression, whose
 //! type comes from the very choice being made; an enum, a record or an
-//! annotation type as the *argument*, whether a reachable file declares it or
-//! the classpath holds it, because the supertype JLS 8.9, 8.10 and 9.6 give
-//! those three is a *named* type nobody writes down, so the closure a walk would
-//! have to drain is missing part of itself. As a *parameter* type an external
-//! one of the three is still separable, because the closure walked belongs to
-//! the argument: `f(DayOfWeek)` at `f(s)` for a `String` `s` is excluded. An
+//! annotation type the classpath holds, as the *argument*, because the
+//! supertype JLS 8.9, 8.10 and 9.6 give those three is a *named* type nobody
+//! writes down, so the closure the world would have to drain is missing part
+//! of itself — a reachable file's one is separable wherever the world holds
+//! that supertype, since the walk asks for it by name. As a *parameter* type
+//! an external one of the three is still separable, because the closure
+//! walked belongs to the argument: `f(DayOfWeek)` at `f(s)` for a `String` `s` is excluded. An
 //! interface is not in the group at all, in either position, because its own
 //! unwritten supertype is [`OBJECT`] alone. And a generic override the subtype
 //! pinned down, which is `Member::parameter_types`' ceiling rather than this
@@ -41,7 +42,7 @@ use javelin_parser::DeclKind;
 
 use crate::externals::Externals;
 use crate::files::{DeclSite, Files};
-use crate::members::Member;
+use crate::members::{Member, is_type_kind};
 use crate::resolve::resolve_written;
 use crate::types::{Primitive, Type};
 
@@ -301,6 +302,11 @@ pub(crate) fn excluded_by_arguments(
 /// nothing and is hidden by nothing: `Member::parameter_types` answers `None`
 /// there, and `None` is not equal to a list, so the only thing an unreachable
 /// declaration can do here is stop a pick — never make one.
+///
+/// A type and a variable never hide each other (JLS 6.5.2 keeps them in two
+/// namespaces), and both have no parameters to compare, so kind is asked first:
+/// `Sub`'s nested `class g` beside `Base`'s field `g` is two answers, one per
+/// position, and a value access cannot say which position it is in.
 pub(crate) fn hides_the_rest(
     own: &Member<'_>,
     matches: &[Member<'_>],
@@ -310,9 +316,11 @@ pub(crate) fn hides_the_rest(
     let Some(expected) = own.parameter_types(files, externals) else {
         return false;
     };
+    let is_type = is_type_kind(own.kind());
     matches.iter().all(|member| {
         member.same_declaration(own)
-            || member.parameter_types(files, externals).as_ref() == Some(&expected)
+            || (is_type_kind(member.kind()) == is_type
+                && member.parameter_types(files, externals).as_ref() == Some(&expected))
     })
 }
 
@@ -366,8 +374,8 @@ fn cannot_pass(from: &Type, to: &Type, files: &Files<'_>, externals: &dyn Extern
         }
         // Wholly the world's answer, and `Some(false)` is the only one that
         // excludes. An external enum, record or annotation type as `from`
-        // answers `None` for the same reason the walk below refuses a local
-        // one: the closure to be drained is `from`'s, and it is missing the
+        // answers `None`, where the walk below asks the world on a local one's
+        // behalf: the closure to be drained is `from`'s, and it is missing the
         // supertype the language gives it and nobody writes down. As `to` it
         // is as separable as anything else, because then the closure walked
         // belongs to the argument. An external interface is separable in
@@ -414,9 +422,9 @@ fn cannot_pass(from: &Type, to: &Type, files: &Files<'_>, externals: &dyn Extern
         (Type::External { .. } | Type::Declared { .. } | Type::Primitive(_), Type::Array(_))
         | (Type::Array(_), Type::Primitive(_) | Type::Declared { .. }) => true,
         (Type::Array(_), Type::External { fqn, .. }) => !ARRAY_SUPERTYPES.contains(&fqn.as_str()),
-        // ponytail: `Foo[]` against `Bar[]` is not separated. Array covariance plus an element type that
-        // may be unresolvable makes the certainty cost more to establish than
-        // the separation is worth. The upgrade is to recurse through
+        // ponytail: `Foo[]` against `Bar[]` is not separated. Array covariance
+        // plus an element type that may be unresolvable makes the certainty
+        // cost more to establish than the separation is worth. The upgrade is to recurse through
         // `Type::Array` once the element side is worth trusting.
         //
         // `null` against an external type falls here and excludes nothing, as
@@ -519,23 +527,22 @@ fn may_be_subtype(
         // `java.lang.Enum`, a record `java.lang.Record` and an annotation type
         // `java.lang.annotation.Annotation`, and each of those brings its own
         // interfaces — an enum is `Comparable` and `Serializable` without
-        // saying so. So the walk cannot see the whole closure and answers
-        // "could be" rather than completing on a closure that is missing part
-        // of itself. Only an external target has to ask: no implicit supertype
-        // leads back into a file this query can reach, so a local target is
-        // unaffected.
-        //
-        // ponytail: an enum, a record and an annotation type are therefore
-        // separable from no external type at all. Not the same case as
-        // [`OBJECT`], which is *necessary* — without it this walk would
-        // exclude every file-local argument from `f(Object)`, which is unsound
-        // rather than merely narrow — where these three would only widen what
-        // is separable. The upgrade is to ask the world about each of the three
-        // by fqn exactly as `OBJECT` is asked.
-        if matches!(to, Target::External(_))
-            && !matches!(decl.kind, DeclKind::Class | DeclKind::Interface)
-        {
-            return true;
+        // saying so. So the world is asked about that supertype by fqn, as a
+        // written external one is, and a world that does not hold it answers
+        // "could be". Only an external target has to ask: no implicit
+        // supertype leads back into a file this query can reach, so a local
+        // target is unaffected.
+        if matches!(to, Target::External(_)) {
+            let implicit = match decl.kind {
+                DeclKind::Class | DeclKind::Interface => None,
+                DeclKind::Enum => Some("java.lang.Enum"),
+                DeclKind::Record => Some("java.lang.Record"),
+                DeclKind::AnnotationType => Some("java.lang.annotation.Annotation"),
+                _ => return true,
+            };
+            if implicit.is_some_and(|fqn| may_reach(fqn, to, externals)) {
+                return true;
+            }
         }
         for written in decl.extends.iter().chain(decl.implements.iter()) {
             let at = decl.name_span.start_byte;
@@ -1199,11 +1206,10 @@ mod tests {
 
     #[test]
     fn an_enum_or_a_record_is_not_excluded_from_what_its_implicit_supertype_brings() {
-        // The walk sees `extends` and `implements` and nothing else, so a
-        // declaration whose implicit supertype is not `java.lang.Object` has a
-        // closure the walk cannot complete: an enum is `Comparable` and
-        // `Serializable` through `java.lang.Enum`, with none of it written
-        // down. Excluding on a completed walk there would be a wrong pick.
+        // An enum is `Comparable` and `Serializable` through `java.lang.Enum`,
+        // with none of it written down, and this world holds no
+        // `java.lang.Enum` for the walk to ask. Excluding on the written
+        // closure alone there would be a wrong pick.
         let f = with_jdk("enum Colour { RED } record Point(int x) {} class Plain {}");
         assert!(!f.cannot_pass("Colour", "Serializable"));
         assert!(!f.cannot_pass("Point", "Serializable"));
@@ -1211,6 +1217,33 @@ mod tests {
         // Not vacuous: a plain class's implicit supertype *is* `Object`, and
         // the same question about it is answered.
         assert!(f.cannot_pass("Plain", "Serializable"));
+    }
+
+    #[test]
+    fn an_enum_or_a_record_is_separated_through_the_implicit_supertype_the_world_holds() {
+        const WORLD: &[(&str, &[&str])] = &[
+            ("java.lang.Object", &[]),
+            ("java.io.Serializable", &[]),
+            ("java.lang.Comparable", &[]),
+            (
+                "java.lang.Enum",
+                &["java.lang.Comparable", "java.io.Serializable"],
+            ),
+            ("java.lang.Record", &[]),
+            ("java.lang.annotation.Annotation", &[]),
+            ("java.lang.Number", &["java.io.Serializable"]),
+        ];
+        let f = fixture_with(
+            "enum Colour { RED } record Point(int x) {} @interface Tag {}",
+            Box::new(Classpath { types: WORLD }),
+        );
+        assert!(f.cannot_pass("Colour", "Number"));
+        assert!(f.cannot_pass("Point", "Number"));
+        assert!(f.cannot_pass("Tag", "Number"));
+        // Not vacuous: what the implicit supertype brings still passes.
+        assert!(!f.cannot_pass("Colour", "Serializable"));
+        assert!(!f.cannot_pass("Colour", "Comparable"));
+        assert!(!f.cannot_pass("Point", "Object"));
     }
 
     #[test]

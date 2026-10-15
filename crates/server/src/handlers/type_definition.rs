@@ -54,7 +54,12 @@ fn located(
         )?;
         if crate::handlers::unclaimable(
             &view,
-            id,
+            crate::handlers::inlay_hint::lombok_short(
+                view.syntax,
+                view.document.text(),
+                &externals,
+                id,
+            ),
             &externals,
             survey.as_deref(),
             offset,

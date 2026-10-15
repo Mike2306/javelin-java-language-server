@@ -97,9 +97,15 @@ pub fn handle(
     };
     let offset = view.document.offset_at(to_position(at.position));
     let named = named_types(&view);
+    let lombok = crate::handlers::inlay_hint::lombok_short(
+        view.syntax,
+        view.document.text(),
+        &externals,
+        &id,
+    );
     // The constructor a `new` selects, as definition answers it; the type its
     // name names where it selects none the workspace declares.
-    let Some(target) = constructor_target(&view, &id, &externals, survey, offset)
+    let Some(target) = constructor_target(&view, &id, &externals, survey, offset, lombok)
         .or_else(|| target_at(&view, &id, &externals, &named, offset))
     else {
         return Ok(Vec::new());
@@ -217,6 +223,7 @@ pub fn handle(
                         survey,
                         &current_path,
                         span.start_byte,
+                        lombok,
                     ) == Some((current_path.clone().into_owned(), name_span.start_byte))
                     {
                         found.push(Location::new(uri.clone(), to_lsp_range(span.range)));
@@ -313,6 +320,7 @@ pub fn handle(
                     survey,
                     &current_path,
                     span.start_byte,
+                    lombok,
                 )
                 .as_ref()
                     == Some(&target)
@@ -552,8 +560,10 @@ fn new_lands(
     survey: Option<&javelin_index::Survey>,
     current: &str,
     offset: u32,
+    lombok: bool,
 ) -> Option<(String, u32)> {
-    match crate::handlers::constructor_in(view, id, externals, survey, offset, true)?.target {
+    match crate::handlers::constructor_in(view, id, externals, survey, offset, true, lombok)?.target
+    {
         javelin_semantic::ConstructorTarget::Local(found) => {
             Some((current.to_owned(), found.name_span.start_byte))
         }
@@ -573,8 +583,11 @@ fn constructor_target(
     externals: &crate::classpath::ClasspathExternals,
     survey: Option<&javelin_index::Survey>,
     offset: u32,
+    lombok: bool,
 ) -> Option<Target> {
-    match crate::handlers::constructor_in(view, id, externals, survey, offset, false)?.target {
+    match crate::handlers::constructor_in(view, id, externals, survey, offset, false, lombok)?
+        .target
+    {
         javelin_semantic::ConstructorTarget::Local(found) => Some(Target::Decl {
             name: found.name,
             name_span: found.name_span,
@@ -784,6 +797,7 @@ mod tests {
     fn declared(fqn: &str, path: &str, name_range: Range) -> WorkspaceType {
         let simple = fqn.rsplit('.').next().unwrap_or(fqn).to_owned();
         WorkspaceType {
+            is_public: true,
             doc_span: None,
             fqn: fqn.to_owned(),
             simple,
@@ -1083,7 +1097,7 @@ mod tests {
             std::thread::current().id()
         ));
         let _ = std::fs::remove_dir_all(&root);
-        let package = root.join("com/example");
+        let package = root.join("com").join("example");
         std::fs::create_dir_all(&package).expect("temp tree");
         let greeter = package.join("Greeter.java");
         let greeter_text = "package com.example;\n\
@@ -1363,6 +1377,47 @@ mod tests {
             references_in(&mut state, &uri, 2, 30, false),
             vec![("User.java".to_owned(), 2, 29)]
         );
+    }
+
+    /// What Lombok writes into the file is read once per request and handed
+    /// to every `new`: a model-covered `@Getter` still lets them answer, a
+    /// `@Delegate` the model does not cover still refuses them.
+    #[test]
+    fn a_constructors_references_follow_the_files_one_lombok_reading() {
+        let sources = crate::workspace::testing::indexed_with_member_refs(
+            "references-constructor-lombok",
+            &[
+                ("com/example/Box.java", BOX),
+                ("com/example/User.java", USER),
+            ],
+        );
+        let user = |import: &str, field: &str| {
+            USER.replace(
+                "package com.example;\n",
+                &format!("package com.example;\n{import}\n"),
+            )
+            .replace("class User {\n", &format!("class User {{\n    {field}\n"))
+        };
+        let getter = user("import lombok.Getter;", "@Getter int n;");
+        let (mut state, uri) = surveyed(&sources, "com/example/User.java", &getter);
+        assert_eq!(
+            references_in(&mut state, &uri, 4, 49, true),
+            vec![
+                ("Box.java".to_owned(), 3, 11),
+                ("Box.java".to_owned(), 5, 29),
+                ("User.java".to_owned(), 4, 48),
+            ]
+        );
+        let delegate = user(
+            "import lombok.experimental.Delegate;",
+            "@Delegate Object d;",
+        );
+        let (mut state, uri) = surveyed(&sources, "com/example/User.java", &delegate);
+        assert!(!references_in(&mut state, &uri, 4, 49, true).contains(&(
+            "Box.java".to_owned(),
+            3,
+            11
+        )));
     }
 
     /// `super(…)` in a file the editor never opened, `this(…)` and an enum

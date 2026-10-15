@@ -29,8 +29,9 @@ pub use expr::{
 };
 pub use folding_range::{FoldingRange, FoldingRangeKind, folding_ranges};
 pub use occurrences::{
-    TypeOccurrence, creation_name_spans, explicit_constructor_spans, identifier_spans,
-    identifier_spans_in, member_name_spans, type_occurrences, unbound_expression_names,
+    TypeOccurrence, creation_name_spans, explicit_constructor_spans, has_receiver,
+    identifier_spans, identifier_spans_in, member_name_spans, strings_mention, type_occurrences,
+    unbound_expression_names,
 };
 pub use queries::{
     AnnotationElement, Candidate, Definition, DefinitionKind, annotation_element_at,

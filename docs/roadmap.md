@@ -640,12 +640,13 @@ a test in `crates/cli/tests/editor_pass.rs` now, five per sub-phase.
   `class A extends Base<Foo> { void m(Foo f) }` — answers nothing, because
   own-shadows-inherited compares parameter types without applying
   `Member::subs`. Phase 3a widened one of them to cover an external type: an
-  enum, a record or an annotation type **as the argument** excludes no
-  external parameter type, whether the open file declares it or the classpath
-  holds it. JLS 8.9, 8.10 and 9.6 give those three a *named* implicit
-  supertype nobody writes down, so locally the walk has no
-  `extends`/`implements` to follow, and externally the type fact's closure is
-  marked incomplete and the world answers "cannot say". It runs one way only:
+  enum, a record or an annotation type the classpath holds, **as the
+  argument**, excludes no external parameter type. JLS 8.9, 8.10 and 9.6 give
+  those three a *named* implicit supertype nobody writes down, so the type
+  fact's closure is marked incomplete and the world answers "cannot say". One
+  the open file declares is separable since: the walk asks the world for
+  `java.lang.Enum`, `java.lang.Record` or `java.lang.annotation.Annotation` by
+  name, and answers "could be" if it does not hold it. It runs one way only:
   the closure a walk drains is the argument's, so one of the three in the
   **parameter** position is still separable. An interface is not in the group
   in either position: its one unwritten supertype is `java.lang.Object`,
@@ -1233,7 +1234,82 @@ already listed there unadvertised, the way `workspace/symbol` was:
 implementing them flipped the same assertion the other way rather than adding
 a new row.
 
-## Phase 5b — Authoring features ← out of version 1
+## Phase 5b — Authoring features
+
+Started 2026-10-13 at the user's request, on the terms in
+[the design](superpowers/specs/2026-10-13-authoring-verbs-design.md): a write
+that misses one use breaks the build, so each verb answers only where the edit
+can be proved whole and refuses, with its reason, everywhere else.
+
+**Rename** (done): `prepareRename` and `rename` for a local, a parameter, and
+a private field or method — the targets Java confines to the open file. Not a
+pattern binding: the scope tree binds one to the end of its enclosing scope,
+wide enough for reading and too wide to write by. Every token spelled like the target is resolved the way
+references resolves it; one that lands nowhere while it could be the target
+refuses the rename. So do a parse error, a stale view, Lombok in the file, the
+name inside a string literal, a bare use inside a nested or anonymous class,
+a local written inside an anonymous or local class (whose inherited members
+may claim it), a record's canonical constructor parameter, a use a pattern
+binding may claim, and a new name that is a keyword, is already written in the
+scope, or is a member the type already exposes.
+
+**Workspace rename** (done): a top-level type (from its name or a
+constructor's), a non-private field, method or enum constant, and a use of a
+member another file declares. The rename runs off the request loop and reads
+every workspace source — the open buffer where there is one, the disk
+otherwise — resolving every token of the name the way references does, and
+imports and static imports as text. A method is renamed with its override
+family: every method of its hierarchy with the same parameter text. The type's
+file is renamed with it where the file is named after it. It is refused before
+the walk is whole and while the index is behind, and for a declaration in the
+JDK or a dependency, a nested type, a record component, what Lombok generates,
+a method declared in an anonymous or local class, a family member overriding a
+library method or `Object`'s, a same-arity method written differently in the
+hierarchy, an unresolved token that could be the target, a client that cannot
+rename the type's file, and a new name the hierarchy, an edited file, or a file
+the type's name is visible in already uses. `ponytail:` ceilings: non-Java
+files and javadoc `{@link}`s are not rewritten, `$/cancelRequest` does not
+reach the sweep, and a member type inherited from another file is not checked
+for capturing a renamed type's use.
+
+**Add import** (done): a quick fix on the unresolved-type warning, one
+action per type the name could mean — public, nested only in public types
+(for a JAR's, as its `InnerClasses` entry says: a `protected` one's own flags
+say public), in a JDK package under the standard prefixes the JDK exports
+whole, and on the file's own module's classpath. A diagnostic the buffer has
+outrun — the name resolves now — gets nothing. Several candidates are the
+user's choice, so none is preferred; one is. The line goes in name order
+among the single-type imports, in front of the next one, else after them,
+else before the static ones, else after the package. Type facts carry
+`is_public` for it (schema 46). Ceilings: an exported `com.sun` or `jdk`
+package, a Lombok builder (`@Builder(access)` is not read) and a workspace
+type from a source set the module cannot see. Not on completion: inserting an import
+the user did not pick is the guess the invariant forbids.
+
+**Remove unused imports** (done): one `source.organizeImports` action deleting
+each single-type import whose simple name is written nowhere else in the file
+as a whole word — in code, comments or strings, anywhere outside the import
+declarations themselves, read in one pass.
+An import nothing names cannot change what any name means, so the edit is
+whole by construction, and a word in a string keeps an import that could have
+gone. Static and on-demand imports stay; so does an import sharing its line.
+A parse error, a `\u` escape or a lone `\r` refuses the action, and an
+import whose name holds a space or a comment is left alone. Not sorting or grouping:
+that is a formatter's opinion.
+
+**Formatting** (done): `textDocument/formatting` runs the argv in
+`format.command` with the buffer on stdin, in the file's directory, and
+answers one edit replacing the document with its stdout. Advertised only when
+a command is set — the handshake now reads the settings before it answers. It
+runs on a thread of its own, since a formatter is often a JVM, and a non-zero
+exit, empty output, or a run past `format.timeoutMs` answers `RequestFailed`
+with the formatter's first stderr line. `$/cancelRequest` does not reach the
+thread; the timeout bounds it. Not range formatting: few formatters take a
+range, and a range edit cut from a whole-file run can split a construct.
+
+What follows was the plan before then.
+
+### As planned for version 1
 
 Rename, code actions and quick fixes, organize and auto-import, signature help,
 refactoring, and the owed completion upgrades. All of them are an author's verbs and none is on

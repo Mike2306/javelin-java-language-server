@@ -26,14 +26,11 @@ pub fn handle(
 ) -> Result<Vec<FoldingRange>, Cancelled> {
     token.check()?;
     let id = DocumentId::new(params.text_document.uri.as_str());
-    let Some(view) = state.view(&id) else {
+    // The tree alone, so a file never asked for its view is not built one.
+    let Some(tree) = state.tree(&id) else {
         return Ok(Vec::new());
     };
-
-    // ponytail: this handler reads `view.tree` alone and still pays for the
-    // `FileSyntax` and `ScopeTree` the warm view builds — the module doc on
-    // `crates/server/src/handlers.rs` states the ceiling and the upgrade.
-    let parser_ranges = compute_folding_ranges(view.tree.root(), token)?;
+    let parser_ranges = compute_folding_ranges(tree.root(), token)?;
 
     // One poll per emitted range, the way `document_highlight` polls per
     // emitted highlight: the range count grows with the file, so this loop is
@@ -94,6 +91,24 @@ mod tests {
             result.unwrap(),
             Vec::new(),
             "a nonexistent document should fold as empty"
+        );
+    }
+
+    /// Folding reads the tree without the view, and so without the store's
+    /// say on what is open: a closed file's tree has to be gone with it.
+    #[test]
+    fn a_closed_document_folds_as_empty() {
+        let mut state = opened("class A {\n    void m() {\n        int x;\n    }\n}\n");
+        let token = CancellationToken::new();
+        assert!(
+            !handle(&mut state, &params("file:///A.java"), &token)
+                .unwrap()
+                .is_empty()
+        );
+        state.did_close(&DocumentId::new("file:///A.java"));
+        assert_eq!(
+            handle(&mut state, &params("file:///A.java"), &token),
+            Ok(Vec::new())
         );
     }
 

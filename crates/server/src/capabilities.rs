@@ -8,12 +8,13 @@
 //! exist answer from the open buffer or not at all.
 
 use lsp_types::{
-    CallHierarchyServerCapability, CompletionOptions, FoldingRangeProviderCapability,
-    HoverProviderCapability, ImplementationProviderCapability, OneOf, PositionEncodingKind,
-    SaveOptions, SelectionRangeProviderCapability, SemanticTokensFullOptions,
-    SemanticTokensOptions, SemanticTokensServerCapabilities, ServerCapabilities,
-    TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
-    TextDocumentSyncSaveOptions, TypeDefinitionProviderCapability,
+    CallHierarchyServerCapability, CodeActionKind, CodeActionOptions, CodeActionProviderCapability,
+    CompletionOptions, FoldingRangeProviderCapability, HoverProviderCapability,
+    ImplementationProviderCapability, OneOf, PositionEncodingKind, RenameOptions, SaveOptions,
+    SelectionRangeProviderCapability, SemanticTokensFullOptions, SemanticTokensOptions,
+    SemanticTokensServerCapabilities, ServerCapabilities, TextDocumentSyncCapability,
+    TextDocumentSyncKind, TextDocumentSyncOptions, TextDocumentSyncSaveOptions,
+    TypeDefinitionProviderCapability, WorkDoneProgressOptions,
 };
 
 use crate::handlers;
@@ -78,6 +79,22 @@ pub fn server_capabilities() -> ServerCapabilities {
         // one. Advertised before the workspace walk lands, by the rule at the
         // top of this file; until then a type's references are the buffer's.
         references_provider: Some(OneOf::Left(true)),
+        // The add-import quick fix for an unresolved type, and removing
+        // unused imports. See `handlers::code_action`.
+        code_action_provider: Some(CodeActionProviderCapability::Options(CodeActionOptions {
+            code_action_kinds: Some(vec![
+                CodeActionKind::QUICKFIX,
+                CodeActionKind::SOURCE_ORGANIZE_IMPORTS,
+            ]),
+            ..CodeActionOptions::default()
+        })),
+        // Only where every use can be proved found, in the open file or across
+        // the indexed workspace; prepareRename says where before the user
+        // types a name. See `handlers::rename`.
+        rename_provider: Some(OneOf::Right(RenameOptions {
+            prepare_provider: Some(true),
+            work_done_progress_options: WorkDoneProgressOptions::default(),
+        })),
         // `full` and `range`, no `delta`. The legend comes
         // from `handlers::semantic_tokens::LEGEND` so the indices the handler
         // emits cannot drift from what is advertised here.
@@ -107,12 +124,16 @@ pub fn server_capabilities() -> ServerCapabilities {
 
 /// [`server_capabilities`] as the `initialize` response sends it, with the
 /// one capability `lsp-types` has no field for: `typeHierarchyProvider`,
-/// added in LSP 3.17 and absent from the crate's `ServerCapabilities`.
-pub fn capabilities_json() -> javelin_core::Result<serde_json::Value> {
+/// added in LSP 3.17 and absent from the crate's `ServerCapabilities`. And
+/// formatting, only where `config` names a formatter to run.
+pub fn capabilities_json(config: &javelin_core::Config) -> javelin_core::Result<serde_json::Value> {
     let mut capabilities = serde_json::to_value(server_capabilities()).map_err(|err| {
         javelin_core::Error::internal(format!("capabilities are not serialisable: {err}"))
     })?;
     capabilities["typeHierarchyProvider"] = serde_json::Value::Bool(true);
+    if !config.format.command.is_empty() {
+        capabilities["documentFormattingProvider"] = serde_json::Value::Bool(true);
+    }
     Ok(capabilities)
 }
 
@@ -124,7 +145,7 @@ mod tests {
     /// that is not told never offers the type hierarchy.
     #[test]
     fn the_type_hierarchy_is_advertised_in_the_json_sent() {
-        let json = capabilities_json().expect("serialisable");
+        let json = capabilities_json(&javelin_core::Config::default()).expect("serialisable");
         assert_eq!(json["typeHierarchyProvider"], serde_json::json!(true));
         assert_eq!(json["implementationProvider"], serde_json::json!(true));
         assert_eq!(json["callHierarchyProvider"], serde_json::json!(true));
@@ -214,9 +235,14 @@ mod tests {
     }
 
     #[test]
-    fn nothing_that_is_not_implemented_is_advertised() {
-        let capabilities = server_capabilities();
-        assert!(capabilities.rename_provider.is_none());
+    fn rename_is_advertised_with_prepare() {
+        assert!(matches!(
+            server_capabilities().rename_provider,
+            Some(OneOf::Right(RenameOptions {
+                prepare_provider: Some(true),
+                ..
+            }))
+        ));
     }
 
     #[test]

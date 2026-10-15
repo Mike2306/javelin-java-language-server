@@ -28,6 +28,10 @@ const SURFACE: &[(&str, &str)] = &[
     ("textDocument/completion", "completionProvider"),
     ("textDocument/references", "referencesProvider"),
     ("textDocument/rename", "renameProvider"),
+    (
+        "textDocument/prepareRename",
+        "renameProvider/prepareProvider",
+    ),
     ("workspace/symbol", "workspaceSymbolProvider"),
     (
         "textDocument/documentHighlight",
@@ -58,7 +62,58 @@ const METHOD_NOT_FOUND: i64 = -32601;
 
 #[test]
 fn every_method_the_router_answers_is_advertised_and_the_reverse() {
-    let mut editor = Editor::launch(&no_classpath());
+    let capabilities = agree(&no_classpath());
+    assert!(capabilities["documentFormattingProvider"].is_null());
+}
+
+/// Formatting is the one method answered only as configured, so it must be
+/// advertised only as configured too.
+#[test]
+fn formatting_is_reachable_exactly_when_a_formatter_is_named() {
+    let mut options = no_classpath();
+    options["format"] = serde_json::json!({ "command": ["cat"] });
+    let capabilities = agree(&options);
+    assert_eq!(
+        capabilities["documentFormattingProvider"],
+        serde_json::json!(true)
+    );
+}
+
+/// The answer comes from the formatter's thread, over the same pipe, as one
+/// edit replacing the whole buffer — and the loop answers in the meantime.
+#[test]
+fn a_formatting_answer_is_the_formatters_output_over_the_whole_buffer() {
+    let mut options = no_classpath();
+    options["format"] = serde_json::json!({ "command": ["sh", "-c", "sleep 1; tr a-z A-Z"] });
+    let mut editor = Editor::launch(&options);
+    let path = demo_project().join("src/main/java/com/example/Greeter.java");
+    let uri = editor.open(&path);
+    let text = std::fs::read_to_string(&path).expect("fixture");
+    let params = serde_json::json!({
+        "textDocument": { "uri": uri },
+        "options": { "tabSize": 4, "insertSpaces": true }
+    });
+    let answer = editor
+        .server()
+        .eventually("textDocument/formatting", &params, |answer| {
+            answer["result"].is_array()
+        });
+    let edits = answer["result"].as_array().expect("edits");
+    assert_eq!(edits.len(), 1, "{answer}");
+    assert_eq!(
+        edits[0]["range"]["start"],
+        serde_json::json!({ "line": 0, "character": 0 })
+    );
+    assert_eq!(
+        edits[0]["newText"],
+        serde_json::json!(text.to_ascii_uppercase())
+    );
+}
+
+/// Asserts the router and the handshake agree on every `SURFACE` method, and
+/// returns what the handshake advertised.
+fn agree(options: &serde_json::Value) -> serde_json::Value {
+    let mut editor = Editor::launch(options);
     let uri = editor.open(&demo_project().join("src/main/java/com/example/Greeter.java"));
     let (line, character) = editor.find(&uri, "public String greet");
 
@@ -152,6 +207,7 @@ fn every_method_the_router_answers_is_advertised_and_the_reverse() {
             if advertised { "advertised" } else { "absent" },
         );
     }
+    editor.capabilities().clone()
 }
 
 #[test]

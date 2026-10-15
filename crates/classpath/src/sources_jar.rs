@@ -234,6 +234,7 @@ mod tests {
 
     fn compiled() -> TypeFacts {
         TypeFacts {
+            is_public: true,
             constructors: Vec::new(),
             doc_span: None,
             fqn: "com.acme.Greeter".to_owned(),

@@ -35,6 +35,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       index: {
         backgroundIndexing: settings.get<boolean>("index.backgroundIndexing", true),
       },
+      format: {
+        command: settings.get<string[]>("format.command", []),
+        timeoutMs: settings.get<number>("format.timeoutMs", 10000),
+      },
     },
   };
 

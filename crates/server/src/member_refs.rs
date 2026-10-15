@@ -331,11 +331,13 @@ fn method_facts(name: &str, parameters: &[&str]) -> javelin_classpath::MemberFac
 #[cfg(test)]
 pub(crate) fn library_world() -> std::sync::Arc<javelin_classpath::TypeWorld> {
     let fact = |fqn: &str, members| javelin_classpath::TypeFacts {
+        is_public: true,
         members,
         ..crate::classpath::fact(fqn)
     };
     let jdk = javelin_classpath::TypeWorld::new(vec![
         fact("java.lang.Object", Vec::new()),
+        fact("java.lang.Enum", Vec::new()),
         fact("java.lang.String", vec![method_facts("length", &[])]),
         fact("java.io.InputStream", vec![method_facts("read", &[])]),
     ]);
@@ -698,6 +700,7 @@ mod tests {
     fn a_call_into_a_type_two_jars_declare_differently_is_not_recorded() {
         let sources = indexed("member-refs-rivalled", &[]);
         let other = javelin_classpath::TypeFacts {
+            is_public: true,
             members: vec![method_facts("other", &[]), method_facts("find", &[])],
             ..crate::classpath::fact("org.lib.Repo")
         };

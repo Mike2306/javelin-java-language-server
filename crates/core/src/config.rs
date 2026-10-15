@@ -174,6 +174,28 @@ impl Default for BuildConfig {
     }
 }
 
+/// An external formatter: Javelin has no opinion on layout, so it borrows the
+/// project's.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct FormatConfig {
+    /// The formatter's argv, reading the file on stdin and writing it
+    /// formatted to stdout: `["google-java-format", "-"]`. Empty, the default,
+    /// means no formatting is advertised.
+    pub command: Vec<String>,
+    /// How long one run may take before it is killed and the request fails.
+    pub timeout_ms: u64,
+}
+
+impl Default for FormatConfig {
+    fn default() -> Self {
+        Self {
+            command: Vec::new(),
+            timeout_ms: 10_000,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Config {
@@ -183,6 +205,7 @@ pub struct Config {
     pub diagnostics: DiagnosticsConfig,
     pub jdk: JdkConfig,
     pub build: BuildConfig,
+    pub format: FormatConfig,
 }
 
 impl Config {

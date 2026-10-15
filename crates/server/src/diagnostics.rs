@@ -15,8 +15,9 @@
 //!
 //! ponytail: of members, a method reference and a bare field name are not
 //! diagnosed, nor a field through a type name this file declares, whose
-//! inherited nested types no list holds. A qualified type name is diagnosed only when it is qualified by a package
-//! — `com.example.Missing` — and never when any part of it is a type,
+//! inherited nested types no list holds. A qualified type name is diagnosed
+//! only when it is qualified by a package — `com.example.Missing` — and
+//! never when any part of it is a type,
 //! because `HashMap.Entry` is `Map.Entry` inherited and no fact lists a
 //! type's inherited member types. The upgrades are the parser naming what a
 //! field access's left side is, and member types in the closure.
@@ -947,6 +948,7 @@ mod tests {
 
     fn fact(fqn: &str, kind: DeclKind, supertypes: &[&str]) -> javelin_classpath::TypeFacts {
         javelin_classpath::TypeFacts {
+            is_public: true,
             constructors: Vec::new(),
             doc_span: None,
             name_start: 0,

@@ -151,6 +151,7 @@ fn zero() -> Span {
 /// row can cost.
 fn workspace() -> WorkspaceIndex {
     let target = WorkspaceType {
+        is_public: true,
         doc_span: None,
         fqn: "com.example.Target".to_owned(),
         simple: "Target".to_owned(),

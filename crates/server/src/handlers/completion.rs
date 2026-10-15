@@ -336,6 +336,7 @@ add Method int add(int by)"
     fn a_classpath_fact_carrying_no_members_offers_none() {
         let mut state = opened("import java.util.List;\nclass A { void go(List l) { l.; } }\n");
         state.install_classpath(Classpath::holding(vec![TypeFacts {
+            is_public: true,
             constructors: Vec::new(),
             doc_span: None,
             name_start: 0,
@@ -405,6 +406,7 @@ add Method int add(int by)"
         // `extends java.lang.Object` nobody writes, so a closure that stops
         // one type short is a gap this flag has to see.
         let object = TypeFacts {
+            is_public: true,
             constructors: Vec::new(),
             doc_span: None,
             name_start: 0,
@@ -422,6 +424,7 @@ add Method int add(int by)"
         };
         Classpath::holding(vec![
             TypeFacts {
+                is_public: true,
                 constructors: Vec::new(),
                 doc_span: None,
                 name_start: 0,

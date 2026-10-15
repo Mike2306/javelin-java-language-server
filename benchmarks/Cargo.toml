@@ -79,3 +79,7 @@ harness = false
 [[bench]]
 name = "inlay_hints"
 harness = false
+
+[[bench]]
+name = "code_actions"
+harness = false

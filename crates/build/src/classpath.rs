@@ -249,7 +249,8 @@ pub fn resolve_classpath_reporting(
     child: &ChildSlot,
 ) -> Result<Resolved> {
     let key = build_files_key(root, kind);
-    // ponytail: such a build asks the tool every session. The upgrade is
+    // ponytail: a build with a movable version, or a Gradle one whose cached
+    // answer names a snapshot, asks the tool every session. The upgrade is
     // answering from the cache at once and re-asking behind it, the answer
     // whole when the two agree.
     if !movable_versions(root)
@@ -511,8 +512,10 @@ pub struct BuildHints {
     /// more into than is modelled says so itself.
     ///
     /// ponytail: a hand-written list, so a member generator not on it is
-    /// invisible. AspectJ's weaver alone is not on it: it weaves at load
-    /// time, after javac has checked every call.
+    /// invisible and the members it adds read as missing. AspectJ's weaver
+    /// alone is not on it: it weaves at load time, after javac has checked
+    /// every call. The upgrade is an entry per tool as one is met — no build
+    /// tool reports that a plugin adds members.
     pub rewrites: bool,
 }
 
@@ -1225,6 +1228,7 @@ mod tests {
                                  -Dmdep.outputFile=*) out=\"${arg#-Dmdep.outputFile=}\";; \
                                  esac; done\n";
 
+    #[cfg(unix)]
     fn fake_mvnw(root: &Path, body: &str) {
         use std::os::unix::fs::PermissionsExt as _;
         let path = root.join("mvnw");
@@ -1622,6 +1626,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    #[cfg(unix)]
     fn resolve(root: &Path, cache: &Path) -> Result<Vec<PathBuf>> {
         resolve_classpath(
             root,

@@ -122,12 +122,12 @@ pub fn member_definition_at(
     // is not that there is nowhere to put it — it is that `signature_of` has
     // nothing to slice.
     //
-    // ponytail: this refuses every cross-file definition, which is the
-    // ceiling and not a bug. The upgrade is `Files` carrying a document and a
-    // tree per entry rather than a syntax view and a scope tree, so a member
-    // another file declares has a buffer to slice a signature out of — which
-    // belongs to the slice that makes a set with more than one file reachable,
-    // the workspace source index.
+    // ponytail: this refuses a member another file in the set declares. No
+    // set the server builds has one — a sibling file's member arrives as an
+    // external fact, and `external_member_at` answers it from the index's
+    // range. The upgrade, if a multi-file set is ever built, is `Files`
+    // carrying a document per entry, so such a member has a buffer to slice
+    // a signature out of.
     (found.file() == Some(files.current())).then_some(())?;
     let decl = found.local_decl()?;
     Some(Definition {

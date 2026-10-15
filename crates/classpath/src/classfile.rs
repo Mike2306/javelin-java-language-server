@@ -221,6 +221,9 @@ pub fn read_class(bytes: &[u8]) -> Result<Option<TypeFacts>> {
         fqn,
         simple,
         kind,
+        // A nested class's own flags say `public` for `protected` too; its
+        // `InnerClasses` entry keeps what the source wrote.
+        is_public: nesting.get(this).map_or(flags, |entry| entry.2) & PUBLIC != 0,
         type_parameters,
         supertypes,
         supertype_arguments,
@@ -520,10 +523,11 @@ fn signature<'a>(attributes: &[(&str, &[u8])], pool: &Pool<'a>) -> Result<Option
     pool.utf8(body.u16()?).map(Some)
 }
 
-/// Each nested class's binary name to its outer class's binary name and its
-/// own simple name, where the class file records them. `None` for either
-/// means anonymous (no simple name) or local (no outer class).
-type Nesting<'a> = HashMap<&'a str, (Option<&'a str>, Option<&'a str>)>;
+/// Each nested class's binary name to its outer class's binary name, its
+/// own simple name and its access flags as written, where the class file
+/// records them. `None` for either name means anonymous (no simple name) or
+/// local (no outer class).
+type Nesting<'a> = HashMap<&'a str, (Option<&'a str>, Option<&'a str>, u16)>;
 
 fn inner_classes<'a>(body: &'a [u8], pool: &Pool<'a>) -> Result<Nesting<'a>> {
     let mut input = Cursor { bytes: body, at: 0 };
@@ -538,8 +542,8 @@ fn inner_classes<'a>(body: &'a [u8], pool: &Pool<'a>) -> Result<Nesting<'a>> {
             0 => None,
             index => Some(pool.utf8(index)?),
         };
-        input.skip(2)?;
-        nesting.insert(inner, (outer, simple));
+        let flags = input.u16()?;
+        nesting.insert(inner, (outer, simple, flags));
     }
     Ok(nesting)
 }
@@ -560,7 +564,7 @@ impl Names<'_, '_> {
             return None;
         }
         match self.nesting.get(binary) {
-            Some((Some(outer), Some(simple))) => {
+            Some((Some(outer), Some(simple), _)) => {
                 Some(format!("{}.{simple}", self.fqn_at(outer, depth + 1)?))
             }
             Some(_) => None,
@@ -569,7 +573,10 @@ impl Names<'_, '_> {
             // records every nested class a file mentions, so this is reached
             // for foreign names in a hand-written or obfuscated class file.
             // A trailing or doubled `$` — Scala's `Foo$` module class — is
-            // not a name Java source can write.
+            // not a name Java source can write. The upgrade is naming it from
+            // its own class file, whose `InnerClasses` lists it if it is
+            // nested — a second pass over the JAR, and a change to the facts
+            // the JAR store keeps.
             None => {
                 let fqn = binary.replace(['/', '$'], ".");
                 (!fqn.split('.').any(str::is_empty)).then_some(fqn)
@@ -1100,6 +1107,13 @@ mod tests {
     }
 
     #[test]
+    fn a_protected_nested_class_is_not_public_though_its_own_flags_say_so() {
+        assert!(!facts("Box$Guarded").is_public);
+        assert!(facts("Box$Entry").is_public);
+        assert!(facts("Box").is_public);
+    }
+
+    #[test]
     fn a_jar_yields_every_nameable_class_it_holds() {
         let facts = read_jar_facts(
             &jar_fixture(),
@@ -1114,6 +1128,7 @@ mod tests {
             vec![
                 "com.acme.Box",
                 "com.acme.Box.Entry",
+                "com.acme.Box.Guarded",
                 "com.acme.Box.Inner",
                 "com.acme.Box.Inner.Deeper",
                 "com.acme.Color",

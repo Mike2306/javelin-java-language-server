@@ -35,7 +35,7 @@ pub fn handle(
     // ponytail: this handler reads `view.tree` and `view.document` alone and
     // still pays for the `FileSyntax` and `ScopeTree` the warm view builds —
     // the module doc on `crates/server/src/handlers.rs` states the ceiling and
-    // the upgrade, which is the same one `folding_range` is waiting on.
+    // the upgrade.
     //
     // Convert requested positions to byte offsets, clamping past-end positions.
     let doc_len = view.document.text().len() as u32;

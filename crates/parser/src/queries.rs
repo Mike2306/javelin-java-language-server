@@ -255,9 +255,11 @@ pub(crate) fn qualified_segment(
 /// ponytail: a method's or a constructor's name lives in [`FileSyntax`] and is
 /// never bound by [`ScopeTree`] — the same gap [`definition_at`]'s
 /// `is_simple_name` guard is built around — so clicking either highlights
-/// nothing. The upgrade is the semantic member walk for what one means within
-/// one file, and Phase 3b's reference index for the cross-file half; neither
-/// exists yet.
+/// nothing. Both halves of the upgrade exist above this crate:
+/// `javelin_semantic::member_definition_at` and `call_definition_at` say what a
+/// member name means, and the server's member references already keep only
+/// the sites resolving to one declaration. The upgrade is the highlight
+/// handler asking that, scoped to the open file, rather than this query.
 pub fn occurrences_at(
     document: &TextDocument,
     tree: &SyntaxTree,
@@ -616,7 +618,7 @@ const MAX_CANDIDATES: usize = 500;
 /// An empty result is an ordinary answer: the cursor is after a `.`, or nothing
 /// this file declares starts with what has been typed. Neither is an error and
 /// neither is worth a guess — a member selected from an expression needs the
-/// receiver's type, which is `javelin-semantic` and does not exist yet.
+/// receiver's type, which is `javelin_semantic::member_completions_at`'s question.
 pub fn completions_at(
     document: &TextDocument,
     tree: &SyntaxTree,
@@ -717,8 +719,10 @@ fn is_identifier_char(character: char) -> bool {
 /// so its methods come from the syntax view instead.
 ///
 /// ponytail: every method of an enclosing type, static or not, and nothing
-/// inherited. Both need a type model to do better, and offering a name that is
-/// there to be typed beats withholding it.
+/// inherited. Offering a name that is there to be typed beats withholding it.
+/// Both need the type model, which is `javelin_semantic`'s and not this
+/// crate's: the upgrade is answering bare-name completion there, as
+/// `member_completions_at` already answers a selection.
 fn enclosing_methods(syntax: &FileSyntax, offset: u32) -> Vec<&Decl> {
     let mut enclosing = Vec::new();
     let mut level = &syntax.declarations;

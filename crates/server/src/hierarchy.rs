@@ -200,10 +200,10 @@ pub fn member(externals: &ClasspathExternals, owner: &str, start: u32) -> Option
 /// JDK-typed override on a machine with no JDK. The upgrade is resolving both
 /// spellings to where they were imported from before comparing.
 ///
-/// ponytail: no access modifier is indexed, so a package-private method is
-/// listed as overridden from another package, where Java does not inherit it.
-/// `override_line` refuses that shape; the upgrade is indexing each member's
-/// access.
+/// ponytail: a package-private method is not told from a `protected` one, so
+/// it is listed as overridden from another package, where Java does not
+/// inherit it. `override_line` refuses that shape; the upgrade is indexing
+/// `protected` beside `is_public`.
 ///
 /// ponytail: the type-variable rule matches by name and arity alone, so a
 /// subtype's same-arity overload of a generic method is listed as an
@@ -269,17 +269,16 @@ pub fn overrides<'a>(
 /// one is a lead, so two rules that `overrides` relaxes hold here. A
 /// parameter matches only an equal one — `overrides` lets a type variable
 /// match anything, which also matches a generic method's own variable and an
-/// overload — and a class's method is no override from another package,
-/// because the index stores no access modifier and a package-private method
-/// is not inherited there. An interface's methods are public, so that rule
-/// costs nothing for them. Siblings — the other overrides of what the target
-/// overrides — are not on the line.
+/// overload — and a class's non-`public` method is no override from another
+/// package, because the index does not tell a package-private method, which
+/// is not inherited there, from a `protected` one. Siblings — the other
+/// overrides of what the target overrides — are not on the line.
 ///
 /// ponytail: so an override that pins a supertype's type variable
-/// (`Disk implements Store<String>`'s `put(String)`) and one of a public
+/// (`Disk implements Store<String>`'s `put(String)`) and one of a `protected`
 /// class method from another package are off the line. The upgrade is
-/// substituting the subtype's arguments before comparing, and indexing each
-/// member's access.
+/// substituting the subtype's arguments before comparing, and indexing
+/// `protected` beside `is_public`.
 ///
 /// ponytail: a JDK or JAR method above has no workspace site and is left
 /// out, so overriding `Runnable.run` adds nothing; calls into one are not
@@ -313,7 +312,7 @@ pub fn override_line(
     // Below: each subtype's own matching method.
     for subtype in all_subtypes(externals, index, &owner) {
         token.check()?;
-        if !inherits_across(index, owner_type, subtype) {
+        if !inherits_across(index, owner_type, subtype, method.is_public) {
             continue;
         }
         let Some(members) = externals.own_members(&subtype.fqn) else {
@@ -336,9 +335,6 @@ pub fn override_line(
                 continue;
             }
             queue.push_back(above);
-            if !inherits_across(index, above, owner_type) {
-                continue;
-            }
             let Some(candidates) = externals.own_members(&above.fqn) else {
                 continue;
             };
@@ -346,6 +342,7 @@ pub fn override_line(
                 candidate.name == method.name
                     && candidate.kind == javelin_classpath::DeclKind::Method
                     && !candidate.is_static
+                    && inherits_across(index, above, owner_type, candidate.is_public)
             }) {
                 if single(&own, overridden).and_then(site_of) == target
                     && let Some(site) = written_site(index, overridden)
@@ -402,12 +399,20 @@ fn single<'m>(
 }
 
 /// Whether a method `above` declares can be overridden in `below` for all
-/// this can tell: an interface's always, a class's only within its package.
-fn inherits_across(index: &WorkspaceIndex, above: &WorkspaceType, below: &WorkspaceType) -> bool {
-    if matches!(
-        above.kind,
-        javelin_classpath::DeclKind::Interface | javelin_classpath::DeclKind::AnnotationType
-    ) {
+/// this can tell: an interface's or a `public` one always, any other only
+/// within its package.
+fn inherits_across(
+    index: &WorkspaceIndex,
+    above: &WorkspaceType,
+    below: &WorkspaceType,
+    public: bool,
+) -> bool {
+    if public
+        || matches!(
+            above.kind,
+            javelin_classpath::DeclKind::Interface | javelin_classpath::DeclKind::AnnotationType
+        )
+    {
         return true;
     }
     let package = |ty: &WorkspaceType| index.file_of(&ty.file).map(|file| file.package.clone());
@@ -502,10 +507,12 @@ mod tests {
             .expect("area")
             .name_start;
         let area = member(&externals, "p.Shape", shape).expect("Shape.area");
-        let found: Vec<String> = overrides(&externals, index, "p.Shape", &area)
+        let mut found: Vec<String> = overrides(&externals, index, "p.Shape", &area)
             .into_iter()
             .map(|(ty, _)| ty.fqn.clone())
             .collect();
+        // In the walk's order, which is the file system's: sorted on APFS, not on ext4.
+        found.sort();
         assert_eq!(
             found,
             vec!["p.Circle", "q.Square"],
@@ -634,6 +641,53 @@ mod tests {
             ],
         );
         assert_eq!(overriders(&sources, "r.Visitor"), vec!["r.V"]);
+    }
+
+    /// A `public` class method is inherited by every package; a
+    /// package-private one by its own alone.
+    #[test]
+    fn a_public_class_method_is_on_the_line_from_another_package() {
+        let sources = indexed(
+            "hierarchy-line-public",
+            &[
+                (
+                    "a/A.java",
+                    "package a;\npublic class A { public void run() {} void hide() {} }\n",
+                ),
+                (
+                    "b/B.java",
+                    "package b;\nimport a.A;\npublic class B extends A { public void run() {} public void hide() {} }\n",
+                ),
+            ],
+        );
+        let externals = externals(&sources);
+        let index = &sources.index;
+        let site = |owner: &str, name: &str| {
+            let start = index
+                .members_of(owner)
+                .iter()
+                .find(|member| member.name == name)
+                .expect("declared")
+                .name_start;
+            let site = member(&externals, owner, start)
+                .and_then(|found| found.site)
+                .expect("sited");
+            (site.source, start)
+        };
+        let line = |owner: &str, name: &str| {
+            let (source, start) = site(owner, name);
+            override_line(
+                &externals,
+                index,
+                (&source, start, name),
+                &CancellationToken::new(),
+            )
+            .expect("not cancelled")
+        };
+        let (a_run, b_run) = (site("a.A", "run"), site("b.B", "run"));
+        assert_eq!(line("a.A", "run"), vec![a_run.clone(), b_run.clone()]);
+        assert_eq!(line("b.B", "run"), vec![b_run, a_run]);
+        assert_eq!(line("b.B", "hide"), vec![site("b.B", "hide")]);
     }
 
     #[test]

@@ -34,7 +34,7 @@ pub use infer::{
     HintedType, TypeDefinition, TypeTarget, hinted_type, lambda_parameter_hint, type_definition_at,
     type_of,
 };
-pub use members::{Member, member_type, members_of};
+pub use members::{Member, exposes_member, member_type, members_of};
 pub use missing::{MemberUse, MissingMember, missing_member_at};
 pub use queries::{
     ConstructorTarget, ExternalSummary, ExternalTypeRef, MemberCompletions, SelectedConstructor,

@@ -647,7 +647,10 @@ impl Builder<'_> {
         // scope, where Java scopes it by definite assignment — `if (!(o
         // instanceof String s)) return;` binds `s` after the `if`, and
         // `if (o instanceof String s)` does not. Over-permissive, never
-        // under-permissive. Narrowing it needs flow analysis, which is Phase 2.
+        // under-permissive; `javelin_semantic`'s `pattern_may_be_another` doubts
+        // a name the binding may be hiding. Narrowing it needs flow analysis,
+        // which no phase has scheduled; the two shapes above are the ones to
+        // teach first.
         if let Some(name) = node.child_by_field_name("name") {
             self.bind(
                 scope,

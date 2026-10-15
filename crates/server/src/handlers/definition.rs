@@ -163,6 +163,12 @@ fn constructor(
             survey.as_deref(),
             offset,
             false,
+            crate::handlers::inlay_hint::lombok_short(
+                view.syntax,
+                view.document.text(),
+                &externals,
+                id,
+            ),
         )?;
         match found.target {
             javelin_semantic::ConstructorTarget::Local(definition) => return located(&definition),
@@ -350,6 +356,7 @@ pub(crate) mod tests {
     /// which one is installed and cost eleven seconds.
     fn string_facts(name_start: u32, source: String) -> TypeFacts {
         TypeFacts {
+            is_public: true,
             constructors: Vec::new(),
             doc_span: None,
             name_start: 0,
@@ -613,6 +620,16 @@ pub(crate) mod tests {
         );
     }
 
+    /// A relative path would become a URI naming it from the root — another
+    /// file — so it makes none, in either platform's shape.
+    #[test]
+    fn a_relative_path_makes_no_uri_rather_than_one_from_the_root() {
+        assert_eq!(file_uri(Path::new("cache/jdk/String.java")), None);
+        assert_eq!(file_uri(Path::new(r"cache\jdk\String.java")), None);
+        assert_eq!(file_uri(Path::new("C:String.java")), None);
+        assert!(file_uri(Path::new(r"\\server\share\String.java")).is_some());
+    }
+
     /// A workspace index holding one type per `(fqn, file, line)`, as the
     /// walk would have left it.
     ///
@@ -628,6 +645,7 @@ pub(crate) mod tests {
                     let simple = fqn.rsplit('.').next().unwrap_or(fqn).to_owned();
                     let end = simple.len() as u32;
                     javelin_index::WorkspaceType {
+                        is_public: true,
                         doc_span: None,
                         fqn: (*fqn).to_owned(),
                         simple,
@@ -1170,6 +1188,7 @@ pub(crate) mod tests {
         );
         state.install_classpath(Classpath::holding(vec![
             javelin_classpath::TypeFacts {
+                is_public: true,
                 constructors: Vec::new(),
                 doc_span: None,
                 name_start: 0,
@@ -1186,6 +1205,7 @@ pub(crate) mod tests {
                 source: String::new(),
             },
             javelin_classpath::TypeFacts {
+                is_public: true,
                 constructors: Vec::new(),
                 doc_span: None,
                 name_start: 0,
@@ -1202,6 +1222,7 @@ pub(crate) mod tests {
                 source: String::new(),
             },
             javelin_classpath::TypeFacts {
+                is_public: true,
                 constructors: Vec::new(),
                 doc_span: None,
                 name_start: 0,
@@ -1218,6 +1239,7 @@ pub(crate) mod tests {
                 source: String::new(),
             },
             javelin_classpath::TypeFacts {
+                is_public: true,
                 constructors: Vec::new(),
                 doc_span: None,
                 name_start: 0,

@@ -29,14 +29,16 @@ pub mod workspace;
 use javelin_core::{CancellationToken, Cancelled, Config, Error, Result};
 use javelin_document::DocumentId;
 use lsp_server::{Connection, ExtractError, Message, Notification, Request, RequestId, Response};
-use lsp_types::notification::Notification as _;
+use lsp_types::notification::{Notification as _, ShowMessage};
 use lsp_types::request::{
-    CallHierarchyIncomingCalls, CallHierarchyOutgoingCalls, CallHierarchyPrepare, Completion,
-    DocumentHighlightRequest, DocumentSymbolRequest, FoldingRangeRequest, GotoDefinition,
-    GotoImplementation, GotoTypeDefinition, HoverRequest, InlayHintRequest, References,
-    Request as _, SelectionRangeRequest, SemanticTokensFullRequest, SemanticTokensRangeRequest,
-    TypeHierarchyPrepare, TypeHierarchySubtypes, TypeHierarchySupertypes, WorkspaceSymbolRequest,
+    CallHierarchyIncomingCalls, CallHierarchyOutgoingCalls, CallHierarchyPrepare,
+    CodeActionRequest, Completion, DocumentHighlightRequest, DocumentSymbolRequest,
+    FoldingRangeRequest, GotoDefinition, GotoImplementation, GotoTypeDefinition, HoverRequest,
+    InlayHintRequest, PrepareRenameRequest, References, Request as _, SelectionRangeRequest,
+    SemanticTokensFullRequest, SemanticTokensRangeRequest, TypeHierarchyPrepare,
+    TypeHierarchySubtypes, TypeHierarchySupertypes, WorkspaceSymbolRequest,
 };
+use lsp_types::{MessageType, ShowMessageParams};
 
 pub use capabilities::{capabilities_json, server_capabilities};
 pub use state::ServerState;
@@ -67,20 +69,18 @@ pub fn run_stdio(config: Config) -> Result<()> {
 /// Split out from [`run_stdio`] so integration tests can drive a real handshake
 /// over an in-memory connection instead of spawning a process and framing JSON.
 pub fn serve(connection: &Connection, config: Config) -> Result<()> {
-    let capabilities = capabilities_json()?;
-
-    let init_params = match connection.initialize(capabilities) {
-        Ok(params) => params,
-        // An editor that crashes mid-handshake is not a server error. Exit
-        // quietly rather than with a backtrace the user cannot act on.
-        Err(err) if err.channel_is_disconnected() => {
-            tracing::info!("client disconnected during initialize");
-            return Ok(());
-        }
-        Err(err) => return Err(Error::internal(format!("initialize failed: {err}"))),
+    // In two halves, because what is advertised depends on the settings the
+    // `initialize` request carries: formatting only with a formatter named.
+    let (id, init_params) = match connection.initialize_start() {
+        Ok(started) => started,
+        Err(err) => return handshake_failed(&err),
     };
-
     let config = merge_client_settings(config, &init_params);
+    let capabilities = serde_json::json!({ "capabilities": capabilities_json(&config)? });
+    if let Err(err) = connection.initialize_finish(id, capabilities) {
+        return handshake_failed(&err);
+    }
+
     let mut state = ServerState::new(config)?;
     if init_params
         .pointer("/capabilities/workspace/inlayHint/refreshSupport")
@@ -88,6 +88,18 @@ pub fn serve(connection: &Connection, config: Config) -> Result<()> {
         .unwrap_or(false)
     {
         state.refreshes_hints();
+    }
+    if let Some(edit) = init_params.pointer("/capabilities/workspace/workspaceEdit")
+        && edit
+            .get("documentChanges")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
+    {
+        let renames = edit
+            .get("resourceOperations")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|operations| operations.iter().any(|op| op == "rename"));
+        state.takes_document_changes(renames);
     }
     let mut in_flight = InFlight::new();
     // Cloned out of the state up front so the loop can wait on it and still
@@ -278,10 +290,36 @@ fn handle_message(
                 }
                 Ok(false) => {}
             }
+            // A formatter is a process that may take seconds; it answers
+            // from a thread of its own.
+            let Some(request) = handlers::formatting::start(state, request, &connection.sender)
+            else {
+                return Flow::Continue;
+            };
+            // A rename across the workspace reads every file of it.
+            let Some(request) = handlers::rename::start(state, request, &connection.sender) else {
+                return Flow::Continue;
+            };
             let response = handle_request(state, in_flight, request);
             if connection.sender.send(Message::Response(response)).is_err() {
                 tracing::warn!("client disconnected while responding");
                 return Flow::Stop;
+            }
+            if let Some(message) = state.take_message() {
+                let shown = Notification::new(
+                    ShowMessage::METHOD.to_owned(),
+                    ShowMessageParams {
+                        typ: MessageType::INFO,
+                        message,
+                    },
+                );
+                if connection
+                    .sender
+                    .send(Message::Notification(shown))
+                    .is_err()
+                {
+                    return Flow::Stop;
+                }
             }
             // After the answer it is about: the client asks again for what
             // it shows, and the memo answers what this request worked out.
@@ -326,6 +364,16 @@ fn send_hint_refresh(connection: &Connection, state: &mut ServerState) -> Flow {
         return Flow::Stop;
     }
     Flow::Continue
+}
+
+/// An editor that crashes mid-handshake is not a server error. Exit quietly
+/// rather than with a backtrace the user cannot act on.
+fn handshake_failed(err: &lsp_server::ProtocolError) -> Result<()> {
+    if err.channel_is_disconnected() {
+        tracing::info!("client disconnected during initialize");
+        return Ok(());
+    }
+    Err(Error::internal(format!("initialize failed: {err}")))
 }
 
 /// Apply the `initializationOptions` blob the client sent, if any.
@@ -408,6 +456,23 @@ fn route(state: &mut ServerState, token: &CancellationToken, request: Request) -
         },
         References::METHOD => match extract_params::<References>(request) {
             Ok((id, params)) => reply(id, handlers::references::handle(state, &params, token)),
+            Err(response) => response,
+        },
+        // A refused prepare is `null` plus a message saying why: alone, `null`
+        // reads as a broken key, and Zed shows an error as "Prepare rename via
+        // javelin failed" with the reason dropped.
+        PrepareRenameRequest::METHOD => match extract_params::<PrepareRenameRequest>(request) {
+            Ok((id, params)) => {
+                let answer = handlers::rename::prepare(state, &params, token);
+                if let Ok(Err(refusal)) = &answer {
+                    state.tell(format!("cannot rename: {refusal}"));
+                }
+                reply(id, answer.map(Result::ok))
+            }
+            Err(response) => response,
+        },
+        CodeActionRequest::METHOD => match extract_params::<CodeActionRequest>(request) {
+            Ok((id, params)) => reply(id, handlers::code_action::handle(state, &params, token)),
             Err(response) => response,
         },
         HoverRequest::METHOD => match extract_params::<HoverRequest>(request) {
@@ -661,6 +726,148 @@ mod tests {
         );
     }
 
+    /// Zed shows a failed prepare as "Prepare rename via javelin failed" and
+    /// drops the reason, so the refusal is `null` and the reason a message.
+    #[test]
+    fn a_refused_prepare_rename_answers_null_and_shows_why() {
+        let (server, client) = Connection::memory();
+        // A type parameter is never renamed.
+        let mut state = state_with("file:///A.java", "class A<T> { T count; }");
+        let prepare = request(
+            1,
+            PrepareRenameRequest::METHOD,
+            serde_json::json!({
+                "textDocument": { "uri": "file:///A.java" },
+                "position": { "line": 0, "character": 8 },
+            }),
+        );
+        let mut in_flight = InFlight::new();
+        handle_message(
+            &server,
+            &mut state,
+            &mut in_flight,
+            Message::Request(prepare),
+        );
+        let Ok(Message::Response(answer)) = client.receiver.try_recv() else {
+            panic!("an answer");
+        };
+        assert_eq!(answer.response_result.ok(), Some(serde_json::Value::Null));
+        let Ok(Message::Notification(shown)) = client.receiver.try_recv() else {
+            panic!("a message after the answer");
+        };
+        assert_eq!(shown.method, "window/showMessage");
+        assert!(
+            shown.params["message"]
+                .as_str()
+                .is_some_and(|message| message.starts_with("cannot rename: Javelin renames")),
+            "{}",
+            shown.params
+        );
+    }
+
+    /// Zed shows a failed rename as "Rename via javelin failed" and drops the
+    /// error's text, so the reason follows as a message.
+    #[test]
+    fn a_refused_rename_fails_and_shows_why() {
+        let (server, client) = Connection::memory();
+        let mut state = state_with("file:///A.java", "class A<T> { T count; }");
+        let rename = request(
+            1,
+            lsp_types::request::Rename::METHOD,
+            serde_json::json!({
+                "textDocument": { "uri": "file:///A.java" },
+                "position": { "line": 0, "character": 8 },
+                "newName": "U",
+            }),
+        );
+        let mut in_flight = InFlight::new();
+        handle_message(
+            &server,
+            &mut state,
+            &mut in_flight,
+            Message::Request(rename),
+        );
+        let Ok(Message::Response(answer)) = client.receiver.try_recv() else {
+            panic!("an answer");
+        };
+        assert!(
+            answer.response_result.is_err(),
+            "a refusal is not an empty edit"
+        );
+        let Ok(Message::Notification(shown)) = client.receiver.try_recv() else {
+            panic!("a message after the answer");
+        };
+        assert_eq!(shown.method, "window/showMessage");
+        assert!(
+            shown.params["message"]
+                .as_str()
+                .is_some_and(|message| message.starts_with("cannot rename: Javelin renames")),
+            "{}",
+            shown.params
+        );
+    }
+
+    /// A rename across files is answered from a thread of its own, and a
+    /// file-local one at once; both reach the client.
+    #[test]
+    fn a_rename_is_answered_whether_or_not_it_reads_the_workspace() {
+        let sources = crate::workspace::testing::indexed(
+            "lib-rename",
+            &[
+                ("A.java", "public class A { public void go() {} }"),
+                ("B.java", "class B { void m(A a) { int n = 1; a.go(); } }"),
+            ],
+        );
+        let uri = handlers::file_uri(&sources.path("B.java"))
+            .expect("a uri")
+            .as_str()
+            .to_owned();
+        let mut state = state_with(&uri, "class B { void m(A a) { int n = 1; a.go(); } }");
+        // What a method overrides is unknown without a JDK.
+        state.install_classpath(crate::classpath::Classpath {
+            world: crate::member_refs::library_world(),
+            ..crate::classpath::Classpath::hand_built(&[])
+        });
+        state.install_workspace(workspace::Workspace {
+            index: std::sync::Arc::clone(&sources.index),
+            elapsed: std::time::Duration::ZERO,
+            refreshed: false,
+            survey: Some(std::sync::Arc::default()),
+            absorbed: 0,
+        });
+        let (server, client) = Connection::memory();
+        let mut in_flight = InFlight::new();
+        for (id, character, files) in [(1, 28, 1), (2, 37, 2)] {
+            let rename = request(
+                id,
+                lsp_types::request::Rename::METHOD,
+                serde_json::json!({
+                    "textDocument": { "uri": uri },
+                    "position": { "line": 0, "character": character },
+                    "newName": "x",
+                }),
+            );
+            handle_message(
+                &server,
+                &mut state,
+                &mut in_flight,
+                Message::Request(rename),
+            );
+            let Ok(Message::Response(answer)) = client
+                .receiver
+                .recv_timeout(std::time::Duration::from_secs(10))
+            else {
+                panic!("an answer");
+            };
+            let changes = answer.response_result.expect("an edit")["changes"].clone();
+            assert_eq!(
+                changes.as_object().map(|files| files.len()),
+                Some(files),
+                "{changes}"
+            );
+        }
+    }
+
     fn state_with(uri: &str, source: &str) -> ServerState {
         let mut state = ServerState::new(Config::default()).expect("grammar loads");
         state.did_open(DocumentId::new(uri), 1, source.to_owned());
@@ -724,7 +931,7 @@ mod tests {
             error_code(&route(
                 &mut state,
                 &token,
-                request(1, "textDocument/rename", serde_json::json!({}))
+                request(1, "textDocument/signatureHelp", serde_json::json!({}))
             )),
             lsp_server::ErrorCode::MethodNotFound as i32
         );
@@ -773,7 +980,7 @@ mod tests {
         for request in [
             outline_request(1, "file:///A.java"),
             outline_request(2, "file:///Absent.java"),
-            request(3, "textDocument/rename", serde_json::json!({})),
+            request(3, "textDocument/signatureHelp", serde_json::json!({})),
             request(4, DocumentSymbolRequest::METHOD, serde_json::json!({})),
         ] {
             handle_request(&mut state, &mut in_flight, request);

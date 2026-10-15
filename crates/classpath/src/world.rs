@@ -175,6 +175,22 @@ impl TypeWorld {
         self.by_fqn.get(fqn).map(|&index| &self.facts[index])
     }
 
+    /// Every fact called `simple`, one per fqn: the one [`TypeWorld::facts`]
+    /// answers for it.
+    ///
+    /// ponytail: a scan over every fact, about a millisecond over a large
+    /// classpath, which a quick fix the user asked for affords. The upgrade, if
+    /// completion ever offers unimported types, is an index by simple name.
+    pub fn named<'a>(&'a self, simple: &'a str) -> impl Iterator<Item = &'a TypeFacts> + 'a {
+        self.facts
+            .iter()
+            .enumerate()
+            .filter(move |(index, fact)| {
+                fact.simple == simple && self.by_fqn.get(&fact.fqn) == Some(index)
+            })
+            .map(|(_, fact)| fact)
+    }
+
     /// A depth-first walk of `from`'s direct supertypes outward, stack-based
     /// like `apply::may_be_subtype` — visit order does not affect the
     /// answer, since `Some(false)` requires the whole closure regardless of
@@ -338,6 +354,7 @@ mod tests {
 
     fn interface(fqn: &str, supertypes: &[&str]) -> TypeFacts {
         TypeFacts {
+            is_public: true,
             name_start: 0,
             name_end: 0,
             kind: DeclKind::Interface,
@@ -348,6 +365,7 @@ mod tests {
     fn fact_owned(fqn: &str, supertypes: Vec<String>, supertypes_complete: bool) -> TypeFacts {
         let simple = fqn.rsplit('.').next().unwrap_or(fqn).to_owned();
         TypeFacts {
+            is_public: true,
             constructors: Vec::new(),
             doc_span: None,
             name_start: 0,
@@ -458,10 +476,12 @@ mod tests {
             name_end: 0,
         };
         let bare = TypeFacts {
+            is_public: true,
             members: vec![method.clone()],
             ..fact("com.acme.Task", &["java.lang.Object"], true)
         };
         let sited = TypeFacts {
+            is_public: true,
             members: vec![crate::MemberFacts {
                 name_start: 10,
                 name_end: 13,
