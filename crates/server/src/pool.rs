@@ -199,11 +199,12 @@ fn work(jobs: &Receiver<Job>, results: &Sender<Outcome>) {
 }
 
 fn run(parser: &mut JavaParser, job: Job, incremental: bool) -> Option<Analysis> {
-    // ponytail: cancellation is checked between phases, not inside them.
-    // Tree-sitter's own cancellation flag needs `unsafe`, which is denied
-    // workspace-wide, and neither view builder takes a token. The ceiling is
-    // that shutdown can wait for one parse of one file; push the token into
-    // `FileSyntax::build`/`ScopeTree::build` if that ever shows up.
+    // ponytail: cancellation is checked between phases, not inside them:
+    // `JavaParser::parse`/`reparse` take no token, and neither view builder
+    // does. The ceiling is that shutdown can wait for one parse of one file;
+    // if that ever shows up, stop the parse through tree-sitter's safe
+    // `ParseOptions::progress_callback` and push the token into
+    // `FileSyntax::build`/`ScopeTree::build`.
     job.token.check().ok()?;
 
     let started = std::time::Instant::now();

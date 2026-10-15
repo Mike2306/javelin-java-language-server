@@ -56,11 +56,10 @@ fn a_full_session_over_stdio_starts_serves_and_exits_cleanly() {
     );
 
     server.send(&serde_json::json!({
-        "jsonrpc": "2.0", "id": 90, "method": "textDocument/rename",
+        "jsonrpc": "2.0", "id": 90, "method": "textDocument/signatureHelp",
         "params": {
             "textDocument": { "uri": "file:///A.java" },
-            "position": { "line": 0, "character": 6 },
-            "newName": "B"
+            "position": { "line": 0, "character": 6 }
         }
     }));
     assert_eq!(

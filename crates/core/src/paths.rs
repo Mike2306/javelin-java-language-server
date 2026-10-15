@@ -146,7 +146,11 @@ mod tests {
     fn age(dir: &Path, by: Duration) {
         let then = SystemTime::now() - by;
         for entry in std::fs::read_dir(dir).unwrap() {
-            let file = std::fs::File::open(entry.unwrap().path()).unwrap();
+            // Windows sets a time only through a handle opened for writing.
+            let file = std::fs::File::options()
+                .write(true)
+                .open(entry.unwrap().path())
+                .unwrap();
             file.set_modified(then).unwrap();
         }
     }

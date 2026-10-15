@@ -158,6 +158,7 @@ mod tests {
 
     fn ty(fqn: &str, simple: &str, file: &str, line: u32) -> WorkspaceType {
         WorkspaceType {
+            is_public: true,
             doc_span: None,
             fqn: fqn.to_owned(),
             simple: simple.to_owned(),

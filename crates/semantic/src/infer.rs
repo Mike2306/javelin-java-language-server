@@ -1397,7 +1397,9 @@ fn class_type(element: Type, externals: &dyn Externals) -> Type {
 ///
 /// ponytail: no target type but the parameter a call is passed for, and no
 /// subtype unification (an `ArrayList<String>` passed for `Collection<E>`
-/// binds nothing).
+/// binds nothing). The upgrades are reading an assignment's or a return's
+/// declared type as a target, and binding through the argument's supertype
+/// closure with `members_of`'s substitution.
 fn bind(
     call: &Member<'_>,
     facts: &crate::externals::ExternalMember,
@@ -2144,13 +2146,11 @@ fn candidate_at_depth<'a>(
     // member too. Only misfires on Java that would not compile (an instance
     // member is not reachable through a bare type name), consistent with this
     // phase having no diagnostics; narrow by receiver kind if that ever bites.
-    // The own-shadows-inherited rule below can misfire on real Java, not just
-    // invalid input: `Access::Value` puts fields, enum constants and nested
-    // types in one match set, so a field can hide a same-named nested type it
-    // was never in competition with — `class Base { int g; }
-    // class Sub extends Base { class g {} }` answers the nested type — even
-    // though Java keeps type names out of the variable namespace. Same
-    // upgrade: narrow by receiver kind before the shadow check runs.
+    // `Access::Value` likewise puts fields, enum constants and nested types in
+    // one match set, so a field and a same-named nested type refuse together
+    // (`hides_the_rest` will not let one hide the other) where the position
+    // would pick one; the same upgrade, telling a type position from a value
+    // one, lifts it.
     for statics in [false, true] {
         for member in members_of(owner, files, externals, statics) {
             if member.name() != name {
@@ -3967,6 +3967,18 @@ mod tests {
                       class Sub extends Base { Box X; } \
                       class A { Sub s; void m() { this.s.X.| ; } }";
         assert_eq!(declared_name(&receiver_type(source)), "Box");
+    }
+
+    #[test]
+    fn a_nested_type_does_not_hide_an_inherited_field_of_its_name() {
+        // Java keeps types out of the variable namespace (JLS 6.5.2), so
+        // `Sub`'s `class g` hides nothing of `Base`'s `g`: a value position
+        // means the field, a type position the class, and `Access::Value`
+        // cannot tell which it is in.
+        let source = "class Box {} class Base { Box g; } \
+                      class Sub extends Base { class g {} } \
+                      class A { Sub s; void m() { this.s.g.| ; } }";
+        assert!(!receiver_type(source).is_known());
     }
 
     #[test]

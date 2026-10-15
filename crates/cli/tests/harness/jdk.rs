@@ -10,6 +10,7 @@
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use zip::write::SimpleFileOptions;
 
 /// `(entry name, source)` for every type the checks reach.
@@ -204,16 +205,9 @@ pub struct SyntheticJdk {
 }
 
 impl SyntheticJdk {
-    /// `name` must be distinct per call site within a test binary: every test
-    /// in the binary shares one process id, and that id is the only thing
-    /// besides `name` that keeps two fixtures' temp directories apart.
-    //
-    // ponytail: two `build` calls with the same `name` in one process land on
-    // the same temp directory, and `Drop` can then delete one fixture's
-    // directory out from under the other's still-running test. The upgrade,
-    // if that is ever actually hit, is an atomic counter or a uuid suffix
-    // alongside `name` rather than relying on every call site remembering to
-    // pick a distinct string.
+    /// `name` only labels the temp directory: every test in a binary shares
+    /// one process id, so a per-process counter is what keeps two fixtures —
+    /// and `Drop` deleting one of them — apart.
     pub fn build(name: &str) -> Self {
         Self::build_padded(name, 0)
     }
@@ -224,7 +218,10 @@ impl SyntheticJdk {
     /// The padding is per-fixture rather than in `SOURCES` because eight of the
     /// nine fixture-owning checks want the read to be over in milliseconds.
     pub fn build_padded(name: &str, filler: usize) -> Self {
-        let root = std::env::temp_dir().join(format!("javelin-jdk-{name}-{}", std::process::id()));
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let n = NEXT.fetch_add(1, Ordering::Relaxed);
+        let root =
+            std::env::temp_dir().join(format!("javelin-jdk-{name}-{}-{n}", std::process::id()));
         let home = root.join("home");
         let cache = root.join("cache");
         std::fs::create_dir_all(home.join("lib")).expect("create the JDK home");
@@ -312,6 +309,18 @@ mod tests {
         assert!(
             options["index"]["cacheDir"].is_string(),
             "a cache of its own, not the developer's"
+        );
+    }
+
+    #[test]
+    fn two_fixtures_with_one_name_do_not_share_a_directory() {
+        let first = SyntheticJdk::build("same-name");
+        let second = SyntheticJdk::build("same-name");
+        assert_ne!(first.home(), second.home());
+        drop(first);
+        assert!(
+            second.home().join("lib/src.zip").is_file(),
+            "dropping one fixture deleted the other's JDK"
         );
     }
 

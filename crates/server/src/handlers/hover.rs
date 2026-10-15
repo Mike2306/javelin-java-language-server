@@ -127,6 +127,12 @@ fn constructor(
             survey.as_deref(),
             offset,
             false,
+            crate::handlers::inlay_hint::lombok_short(
+                view.syntax,
+                view.document.text(),
+                &externals,
+                id,
+            ),
         )?;
         match found.target {
             javelin_semantic::ConstructorTarget::Local(definition) => {
@@ -422,6 +428,7 @@ class A {
             name_end: 0,
         };
         state.install_classpath(Classpath::holding(vec![TypeFacts {
+            is_public: true,
             constructors: Vec::new(),
             doc_span: None,
             name_start: 0,
@@ -521,6 +528,7 @@ class A {
         state.install_workspace(crate::workspace::Workspace {
             index: std::sync::Arc::new(javelin_index::WorkspaceIndex::new(vec![
                 javelin_index::WorkspaceType {
+                    is_public: true,
                     doc_span: None,
                     fqn: "com.example.Greeter".to_owned(),
                     simple: "Greeter".to_owned(),

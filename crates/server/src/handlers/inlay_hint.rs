@@ -322,6 +322,8 @@ fn hints(
                             survey.as_deref(),
                             site.name,
                             true,
+                            // `lombok_short` answered `false` above.
+                            false,
                         )
                         .map(|found| found.parameter_names)
                         .filter(|names| !names.is_empty())
@@ -399,8 +401,9 @@ pub(crate) fn lombok_short(
     // god-class's annotations is not free.
     //
     // ponytail: a Lombok annotation written fully qualified in a file
-    // importing nothing of Lombok's is not seen. The upgrade is the parser
-    // recording annotation names.
+    // importing nothing of Lombok's is not seen. Scanning the text for it is
+    // file-sized work on the request loop and misses the inlay deadline on a
+    // god-class; the upgrade is the parser recording annotation names.
     if !syntax
         .imports
         .iter()
@@ -652,6 +655,7 @@ mod tests {
             name_end: 0,
         };
         let string = TypeFacts {
+            is_public: true,
             constructors: Vec::new(),
             doc_span: None,
             fqn: "java.lang.String".to_owned(),
@@ -761,6 +765,7 @@ mod tests {
     fn a_call_through_an_incomplete_external_supertype_is_not_hinted() {
         use javelin_classpath::TypeFacts;
         let base = |members_complete| TypeFacts {
+            is_public: true,
             constructors: Vec::new(),
             doc_span: None,
             fqn: "com.lib.Base".to_owned(),
@@ -810,6 +815,7 @@ mod tests {
 
     fn type_fact(fqn: &str, type_parameters: &[&str], members: Vec<MemberFacts>) -> TypeFacts {
         TypeFacts {
+            is_public: true,
             constructors: Vec::new(),
             doc_span: None,
             fqn: fqn.to_owned(),

@@ -248,16 +248,81 @@ pub fn identifier_spans_in(
     Ok(out)
 }
 
+/// Whether the name at `offset` is selected through a receiver — `x.name`,
+/// `x.name()`, `x::name` — so no scope it is written in can capture it.
+pub fn has_receiver(tree: &SyntaxTree, offset: u32) -> bool {
+    let Some(node) = crate::queries::identifier_at(tree.root(), offset) else {
+        return false;
+    };
+    let Some(parent) = node.parent() else {
+        return false;
+    };
+    match parent.kind() {
+        "method_invocation" => {
+            parent.child_by_field_name("name") == Some(node)
+                && parent.child_by_field_name("object").is_some()
+        }
+        "field_access" => parent.child_by_field_name("field") == Some(node),
+        "method_reference" => parent.child(0) != Some(node),
+        _ => false,
+    }
+}
+
+/// Whether `word` is written, as a whole word, inside a string literal or a
+/// text block — `@MethodSource("word")`, a reflective lookup: uses a rename
+/// cannot see and must not leave behind.
+pub fn strings_mention(
+    document: &TextDocument,
+    tree: &SyntaxTree,
+    word: &str,
+    token: &CancellationToken,
+) -> Result<bool, Cancelled> {
+    mentioned_in(document, tree, word, &["string_literal"], token)
+}
+
+/// Whether `word` is written as a whole word inside a node of one of `kinds`,
+/// found the way [`identifier_spans_in`] finds a spelling: text first, then
+/// one walk up the tree per hit.
+fn mentioned_in(
+    document: &TextDocument,
+    tree: &SyntaxTree,
+    word: &str,
+    kinds: &[&str],
+    token: &CancellationToken,
+) -> Result<bool, Cancelled> {
+    let text = document.text();
+    let is_word = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
+    if word.is_empty() {
+        return Ok(false);
+    }
+    for (at, _) in text.match_indices(word) {
+        token.check()?;
+        let until = at + word.len();
+        if text[..at].chars().next_back().is_some_and(is_word)
+            || text[until..].chars().next().is_some_and(is_word)
+        {
+            continue;
+        }
+        let mut node = tree.root().descendant_for_byte_range(at, until);
+        while let Some(current) = node {
+            if kinds.contains(&current.kind()) {
+                return Ok(true);
+            }
+            node = current.parent();
+        }
+    }
+    Ok(false)
+}
+
 /// Every identifier that names a *selected member*: the name of a method
 /// call, with a receiver or without, the field of a field access, and the
 /// right-hand side of a method reference — the positions whose meaning
 /// depends on a receiver's type, which is the semantic engine's to resolve.
 ///
-/// ponytail: a bare name that means an inherited *field* — `count` inside a
-/// subclass of the file next door — is not a selection here, because
-/// definition does not resolve it either and the two must agree. The upgrade
-/// is teaching `external_member_at` an unqualified field, then adding bare
-/// identifiers the `ScopeTree` leaves unbound to this list.
+/// A bare name that means an inherited *field* — `count` inside a subclass of
+/// the file next door — is not a selection, so it is not here:
+/// [`unbound_expression_names`] lists those, and a caller that wants both asks
+/// for both.
 pub fn member_name_spans(
     document: &TextDocument,
     tree: &SyntaxTree,
@@ -418,6 +483,30 @@ mod tests {
             document,
             tree,
         }
+    }
+
+    #[test]
+    fn has_receiver_tells_a_selection_from_a_bare_name() {
+        let f =
+            fixture("class A { void m() { go(); this.go(); x.f = f; Runnable r = this::go; } }");
+        let at = |needle: &str| f.source.find(needle).expect("in source") as u32;
+        assert!(!has_receiver(&f.tree, at("go();")));
+        assert!(has_receiver(&f.tree, at("go(); x")));
+        assert!(has_receiver(&f.tree, at("f = f")));
+        assert!(!has_receiver(&f.tree, at("f;")));
+        assert!(has_receiver(&f.tree, at("go; }")));
+    }
+
+    #[test]
+    fn strings_mention_finds_whole_words_in_literals_only() {
+        let f = fixture(
+            "class A { @S(\"data\") void data() {} String s = \"metadata\"; // data\n\
+             String t = \"\"\"\n  data\n  \"\"\"; }",
+        );
+        let token = CancellationToken::new();
+        assert!(strings_mention(&f.document, &f.tree, "data", &token).unwrap());
+        let g = fixture("class A { void data() {} String s = \"metadata\"; /* data */ }");
+        assert!(!strings_mention(&g.document, &g.tree, "data", &token).unwrap());
     }
 
     impl Fixture {

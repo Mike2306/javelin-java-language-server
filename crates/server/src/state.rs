@@ -229,6 +229,11 @@ pub struct ServerState {
     hints_await_parse: std::collections::HashSet<DocumentId>,
     /// The client said it takes `workspace/inlayHint/refresh`.
     hint_refresh_support: bool,
+    /// What the last request wants shown to the user, sent after its answer.
+    message: Option<String>,
+    /// The client applies versioned document changes, and renames files.
+    document_changes: bool,
+    rename_files: bool,
 }
 
 /// Tools that add members to a type a source declares, by the package their
@@ -236,9 +241,11 @@ pub struct ServerState {
 /// receiver. Not Lombok, whose annotations each type's index row answers
 /// for — `javelin_classpath::LombokUse`.
 ///
-/// ponytail: a hand-written list, so a member generator not on it is
-/// invisible; `javelin_build::BuildHints::rewrites` is the same list read
-/// from build files.
+/// ponytail: a hand-written list, as is the one
+/// `javelin_build::BuildHints::rewrites` reads build files for, so a member
+/// generator on neither leaves the members it adds judged missing. The
+/// upgrade is its package added here and its plugin there as each one turns
+/// up.
 const MEMBER_REWRITERS: [&str; 1] = ["manifold"];
 
 fn member_rewriter(name: &str) -> bool {
@@ -313,6 +320,9 @@ impl ServerState {
             hint_refresh_sent: false,
             hints_await_parse: std::collections::HashSet::new(),
             hint_refresh_support: false,
+            message: None,
+            document_changes: false,
+            rename_files: false,
         })
     }
 
@@ -699,8 +709,37 @@ impl ServerState {
         self.hint_refresh_sent = false;
     }
 
+    /// Show `message` to the user once the current request is answered.
+    pub(crate) fn tell(&mut self, message: String) {
+        self.message = Some(message);
+    }
+
+    pub(crate) fn take_message(&mut self) -> Option<String> {
+        self.message.take()
+    }
+
     pub(crate) fn refreshes_hints(&mut self) {
         self.hint_refresh_support = true;
+    }
+
+    /// The client takes `documentChanges` in a workspace edit, and among them
+    /// file renames where `rename_files`.
+    pub(crate) fn takes_document_changes(&mut self, rename_files: bool) {
+        self.document_changes = true;
+        self.rename_files = rename_files;
+    }
+
+    pub(crate) fn edits_documents(&self) -> bool {
+        self.document_changes
+    }
+
+    pub(crate) fn renames_files(&self) -> bool {
+        self.rename_files
+    }
+
+    /// No edit handed to the index is still waiting to be read in.
+    pub(crate) fn index_current(&self) -> bool {
+        self.index_behind == 0
     }
 
     /// The channel the finished classpath arrives on, for the loop to select
@@ -748,10 +787,10 @@ impl ServerState {
                     .map(|root| JdkSources::new(&root, src_zip, &version, persist))
             });
         }
-        // ponytail: this skips `Workspace`, so `EngineState::supports` now
+        // ponytail: this skips `Workspace`, so `EngineState::supports`
         // answers `true` for `References`, `WorkspaceSymbols` and
-        // `Diagnostics` — none of which exists. Inert while no handler gates
-        // on readiness, but one ordered ladder is now carrying two
+        // `Diagnostics` before the workspace walk has landed. Inert while no
+        // handler gates on readiness, but one ordered ladder is now carrying two
         // independent facts: how much of the open file resolves, and whether
         // the classpath is in. The upgrade is to split them; do it when the
         // first handler needs to gate on one without claiming the other.
@@ -1215,12 +1254,15 @@ mod tests {
     use javelin_document::Position;
     use javelin_semantic::Externals as _;
 
+    /// The jobs queued, paths written with `/` so one expectation holds on
+    /// Windows, where `path_of` spells `file:///w/A.java` as `\w\A.java`.
     fn queued(jobs: &Receiver<IndexJob>) -> Vec<String> {
+        let shown = |path: &std::path::Path| path.display().to_string().replace('\\', "/");
         jobs.try_iter()
             .map(|job| match job {
-                IndexJob::Disk(path) => format!("disk {}", path.display()),
+                IndexJob::Disk(path) => format!("disk {}", shown(&path)),
                 IndexJob::Buffer(path, document) => {
-                    format!("buffer {} {}", path.display(), document.text())
+                    format!("buffer {} {}", shown(&path), document.text())
                 }
                 IndexJob::Rescan => "rescan".to_owned(),
                 IndexJob::World(_, settled) => format!("world {settled:?}"),
@@ -1247,7 +1289,7 @@ mod tests {
     fn opening_a_buffer_the_disk_disagrees_with_queues_its_text() {
         let root = std::env::temp_dir().join(format!("javelin-open-{}", std::process::id()));
         std::fs::create_dir_all(root.join("src")).expect("dir");
-        std::fs::write(root.join("src/A.java"), "class A {}").expect("file");
+        std::fs::write(root.join("src").join("A.java"), "class A {}").expect("file");
         let mut state = ServerState::new(Config::default()).expect("grammar loads");
         let jobs = state.watching(vec![root.clone()]);
         let uri = |name: &str| format!("file://{}/src/{name}", root.display());
@@ -1259,15 +1301,18 @@ mod tests {
         assert_eq!(
             queued(&jobs),
             vec![format!(
-                "buffer {} class B {{}}",
-                root.join("src/A.java").display()
+                "buffer {}/src/A.java class B {{}}",
+                root.display().to_string().replace('\\', "/")
             )]
         );
         assert_eq!(state.index_behind, 1);
         state.did_close(&DocumentId::new(uri("A.java")));
         assert_eq!(
             queued(&jobs),
-            vec![format!("disk {}", root.join("src/A.java").display())],
+            vec![format!(
+                "disk {}/src/A.java",
+                root.display().to_string().replace('\\', "/")
+            )],
             "and closing it goes back to the disk"
         );
         let _ = std::fs::remove_dir_all(&root);

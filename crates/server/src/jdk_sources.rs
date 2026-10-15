@@ -33,25 +33,13 @@ pub(crate) struct JdkSources {
     /// machine.
     ///
     /// The version is in the key because the fact cache is keyed by it too. A
-    /// JDK replaced in place at the same home by one with a different *feature*
-    /// version misses the fact cache and gets its member offsets re-read from
-    /// the new archive; an extraction directory that did not move with it would
-    /// answer those new offsets with the old file's text, which is a jump
-    /// landing on the wrong declaration rather than a jump that does not
-    /// happen.
-    ///
-    /// ponytail: that guard covers the feature-version case and no other.
-    /// `crates/classpath/src/jdk.rs` parses the feature version (21, 25) and
-    /// `classpath::identity` keys the fact cache on the home and that number,
-    /// so a patch-level replacement in place — `brew upgrade openjdk@21`, a
-    /// distro package update, a rebuilt container layer — keeps both: the fact
-    /// cache *hits* and serves the old archive's byte offsets, while an entry
-    /// nobody extracted before is extracted fresh from the new archive and
-    /// addressed with them. The staleness is not this slice's to begin with —
-    /// the same hit already renders a hover signature out of the old archive's
-    /// facts — and the fix is not here either: fold `src.zip`'s size and mtime
-    /// into `identity`'s version string, so stale facts are discarded and this
-    /// directory moves with them.
+    /// JDK replaced in place at the same home — a new feature version, or a
+    /// patch level whose `src.zip` has another modification time or size, both
+    /// of which `classpath::identity` puts in the version — misses the fact
+    /// cache and gets its member offsets re-read from the new archive; an
+    /// extraction directory that did not move with it would answer those new
+    /// offsets with the old file's text, which is a jump landing on the wrong
+    /// declaration rather than a jump that does not happen.
     dir: PathBuf,
     /// Opened on the first miss and kept: the central directory of a JDK's
     /// `src.zip` is tens of thousands of entries.
@@ -326,13 +314,12 @@ mod tests {
         assert_eq!(sources.materialize(WIDGET.0, NO_LIMIT), Some(first));
     }
 
-    /// The fact cache is keyed by the JDK's feature version, so a JDK replaced
-    /// by a different one has its member offsets re-read. An extraction
-    /// directory that did not move with it would answer those offsets with the
-    /// old file's text — a jump landing somewhere wrong, which is worse than
-    /// one that does not happen. A replacement that keeps the feature version
-    /// is the gap the `ponytail:` on [`JdkSources::dir`] names; nothing here
-    /// catches it.
+    /// The fact cache is keyed by the JDK's version, so a JDK replaced by a
+    /// different one has its member offsets re-read. An extraction directory
+    /// that did not move with it would answer those offsets with the old
+    /// file's text — a jump landing somewhere wrong, which is worse than one
+    /// that does not happen. That a patch-level replacement moves the version
+    /// is `classpath::identity`'s, tested there.
     #[test]
     fn a_jdk_replaced_at_the_same_home_does_not_reuse_the_old_versions_files() {
         let dir = scratch("version_key");

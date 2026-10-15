@@ -648,8 +648,10 @@ impl Worker<'_> {
                         && listed.insert(path.clone())
                     {
                         // ponytail: a dependent that is an open, dirty buffer
-                        // is re-resolved from disk; its next edit re-resolves
-                        // it from the buffer again.
+                        // is re-resolved from disk, so its recorded uses are
+                        // the saved text's until its next edit. The upgrade
+                        // is the worker keeping each buffer's last text until
+                        // a `Disk` job for its path, and resolving from that.
                         targets.push((path, None));
                     }
                 }
@@ -928,7 +930,8 @@ pub(crate) mod testing {
     impl Sources {
         /// The path of a file this tree was built with.
         pub(crate) fn path(&self, relative: &str) -> PathBuf {
-            self.root.join(relative)
+            // As the walk and `path_of` spell it: on Windows `join` keeps a `/`.
+            self.root.join(relative).components().collect()
         }
     }
 
@@ -956,7 +959,7 @@ pub(crate) mod testing {
         let mut parser = javelin_parser::JavaParser::new().expect("grammar");
         let mut resolved = Vec::new();
         for (relative, text) in files {
-            let path = sources.root.join(relative);
+            let path = sources.path(relative);
             let found = crate::member_refs::resolve_file(
                 &path,
                 (*text).to_owned(),
@@ -1155,7 +1158,7 @@ mod tests {
         let root =
             std::env::temp_dir().join(format!("javelin-worker-member-refs-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        let package = root.join("com/example");
+        let package = root.join("com").join("example");
         std::fs::create_dir_all(&package).expect("dirs");
         let greeter = package.join("Greeter.java");
         let before = "package com.example;\npublic class Greeter {\n    void greet() {}\n}\n";
@@ -1280,7 +1283,7 @@ mod tests {
             true,
             Default::default()
         ));
-        let greeter = root.join("com/example/Greeter.java");
+        let greeter = root.join("com").join("example").join("Greeter.java");
         let document = Arc::new(javelin_document::TextDocument::new(
             javelin_document::DocumentId::new("file:///Greeter.java"),
             2,
@@ -1329,7 +1332,7 @@ mod tests {
         );
         let cache = root.with_extension("cache");
         let _ = std::fs::remove_dir_all(&cache);
-        let greeter = root.join("com/example/Greeter.java");
+        let greeter = root.join("com").join("example").join("Greeter.java");
         let session = |send_world: bool| {
             let (results_tx, results) = crossbeam_channel::unbounded();
             let (jobs, queued) = crossbeam_channel::unbounded();
@@ -1404,7 +1407,7 @@ mod tests {
         );
         jobs.send(Job::World(Arc::new(TypeWorld::empty()), Some(7)))
             .expect("send");
-        let greeter = root.join("com/example/Greeter.java");
+        let greeter = root.join("com").join("example").join("Greeter.java");
         published(&results, |index| {
             !refs_to(index, &greeter, GREETER, "greet").is_empty()
         });
@@ -1423,7 +1426,7 @@ mod tests {
             None,
         );
         published(&results, |index| index.files() == 1);
-        let greeter = root.join("com/example/Greeter.java");
+        let greeter = root.join("com").join("example").join("Greeter.java");
         std::fs::write(&greeter, GREETER).expect("write");
         jobs.send(Job::Disk(greeter.clone())).expect("send");
         let index = published(&results, |index| {
@@ -1454,11 +1457,11 @@ mod tests {
             ],
             None,
         );
-        let greeter = root.join("com/example/Greeter.java");
+        let greeter = root.join("com").join("example").join("Greeter.java");
         published(&results, |index| {
             !refs_to(index, &greeter, GREETER, "greet").is_empty()
         });
-        let maker = root.join("com/example/Maker.java");
+        let maker = root.join("com").join("example").join("Maker.java");
         std::fs::remove_file(&maker).expect("delete");
         jobs.send(Job::Disk(maker)).expect("send");
         // Caller's chain went through `make`'s return type, which is gone.
@@ -1482,13 +1485,13 @@ mod tests {
             ],
             None,
         );
-        let greeter = root.join("com/example/Greeter.java");
+        let greeter = root.join("com").join("example").join("Greeter.java");
         published(&results, |index| {
             !refs_to(index, &greeter, GREETER, "greet").is_empty()
         });
         // Gone without an event, and Greeter changes below `greet`, so the
         // offset every reference is keyed by stays where it was.
-        std::fs::remove_file(root.join("com/example/Caller.java")).expect("delete");
+        std::fs::remove_file(root.join("com").join("example").join("Caller.java")).expect("delete");
         let grown = "package com.example;\npublic class Greeter {\n    void greet() {}\n    void more() {}\n}\n";
         std::fs::write(&greeter, grown).expect("write");
         jobs.send(Job::Disk(greeter.clone())).expect("send");
@@ -1529,7 +1532,7 @@ mod tests {
                 .expect("indexing");
         }
         let (jobs, results) = spawn_over(&root, Some(&cache));
-        let greeter = root.join("com/example/Greeter.java");
+        let greeter = root.join("com").join("example").join("Greeter.java");
         published(&results, |index| {
             !refs_to(index, &greeter, GREETER, "greet").is_empty()
         });

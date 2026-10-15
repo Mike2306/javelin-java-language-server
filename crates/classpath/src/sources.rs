@@ -31,6 +31,12 @@ pub struct TypeFacts {
     pub fqn: String,
     pub simple: String,
     pub kind: DeclKind,
+    /// Written `public`, or a member type of an interface or an annotation type,
+    /// which is implicitly so. A class file says `public` for a nested type
+    /// written `protected` too. A type is nameable from another package only
+    /// when this holds for it and for every type it is nested in, which a
+    /// caller checks against the outer types' facts.
+    pub is_public: bool,
     /// The declaration's type parameters by name, in order: `["K", "V"]`.
     /// What a [`MemberType::Variable`] names, and what a use's type arguments
     /// bind to.
@@ -156,6 +162,7 @@ struct RawType {
     fqn: String,
     simple: String,
     kind: DeclKind,
+    is_public: bool,
     type_parameters: Vec<String>,
     extends: Option<String>,
     implements: Vec<String>,
@@ -416,6 +423,7 @@ pub fn read_type_facts(
             &imports,
             (&name, !tree.has_errors()),
             &mut raw_types,
+            None,
         );
     }
 
@@ -536,6 +544,7 @@ fn collect_types(
     imports: &Rc<Vec<ImportDecl>>,
     (entry, clean): (&str, bool),
     out: &mut Vec<RawType>,
+    outer: Option<DeclKind>,
 ) {
     for decl in decls {
         if !is_named_type(decl.kind) {
@@ -550,6 +559,8 @@ fn collect_types(
             fqn: fqn.clone(),
             simple: decl.name.clone(),
             kind: decl.kind,
+            is_public: has_modifier(decl, "public")
+                || matches!(outer, Some(DeclKind::Interface | DeclKind::AnnotationType)),
             type_parameters: type_parameter_names(decl.type_parameters.as_deref()),
             extends: decl.extends.clone(),
             implements: decl.implements.clone(),
@@ -572,7 +583,15 @@ fn collect_types(
             name_start: decl.name_span.start_byte,
             name_end: decl.name_span.end_byte,
         });
-        collect_types(&decl.children, &fqn, package, imports, (entry, clean), out);
+        collect_types(
+            &decl.children,
+            &fqn,
+            package,
+            imports,
+            (entry, clean),
+            out,
+            Some(decl.kind),
+        );
     }
 }
 
@@ -593,8 +612,9 @@ fn is_named_type(kind: DeclKind) -> bool {
 /// The members of one type, read in the same pass that reads the type itself —
 /// the parse is the expensive part and it happens once.
 ///
-/// ponytail: `private` is the only accessibility this drops, so the ceiling is
-/// that a `protected` or package-private member is recorded and offered to a
+/// ponytail: `private` is the only accessibility recorded — `is_private`, which
+/// readers filter on — so the ceiling is that a `protected` or package-private
+/// member is recorded and offered to a
 /// type that could not name it. That matches the file-local walk, which does
 /// not check accessibility either, so the two answer alike rather than
 /// disagreeing across the seam; the upgrade is one accessibility check both
@@ -1252,6 +1272,7 @@ fn resolve_facts(mut raw: RawType, table: &FqnTable) -> TypeFacts {
         fqn: raw.fqn,
         simple: raw.simple,
         kind: raw.kind,
+        is_public: raw.is_public,
         type_parameters: raw.type_parameters,
         source: raw.source,
         supertypes,

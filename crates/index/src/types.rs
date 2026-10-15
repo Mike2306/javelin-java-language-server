@@ -28,6 +28,7 @@ pub(crate) fn initialize(connection: &Connection) -> Result<()> {
                  type_params TEXT NOT NULL,
                  complete    INTEGER NOT NULL,
                  members_complete INTEGER NOT NULL,
+                 is_public   INTEGER NOT NULL,
                  source      TEXT NOT NULL,
                  name_start  INTEGER NOT NULL,
                  name_end    INTEGER NOT NULL,
@@ -301,8 +302,8 @@ impl CacheDb {
                 .prepare(
                     "INSERT INTO types
                          (fqn, simple, kind, type_params, complete, source, members_complete,
-                          name_start, name_end, doc_start, doc_end)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                          name_start, name_end, doc_start, doc_end, is_public)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                 )
                 .map_err(to_index_error)?;
             let mut insert_super = tx
@@ -342,6 +343,7 @@ impl CacheDb {
                         i64::from(fact.name_end),
                         fact.doc_span.map(|(start, _)| start),
                         fact.doc_span.map(|(_, end)| end),
+                        i64::from(fact.is_public),
                     ))
                     .map_err(to_index_error)?;
                 for super_fqn in &fact.supertypes {
@@ -453,7 +455,7 @@ impl CacheDb {
             .connection
             .prepare(
                 "SELECT fqn, simple, kind, type_params, complete, source, members_complete, \
-                 name_start, name_end, doc_start, doc_end FROM types",
+                 name_start, name_end, doc_start, doc_end, is_public FROM types",
             )
             .map_err(to_index_error)?;
         let mut rows = stmt.query([]).map_err(to_index_error)?;
@@ -471,6 +473,7 @@ impl CacheDb {
             let name_end: u32 = row.get(8).map_err(to_index_error)?;
             let doc_start: Option<u32> = row.get(9).map_err(to_index_error)?;
             let doc_end: Option<u32> = row.get(10).map_err(to_index_error)?;
+            let is_public: i64 = row.get(11).map_err(to_index_error)?;
 
             // `debug!`, not `warn!`: reading a row a newer Javelin wrote is an
             // ordinary cross-version read of a cache that is discarded on a
@@ -498,6 +501,7 @@ impl CacheDb {
                 fqn,
                 simple,
                 kind,
+                is_public: is_public != 0,
                 supertypes_complete: complete != 0,
                 members_complete: members_complete != 0,
                 source,
@@ -615,6 +619,7 @@ mod tests {
     /// equal by coincidence. The name's span is derived from it the same way.
     fn fact(fqn: &str, kind: DeclKind, supertypes: Vec<&str>, complete: bool) -> TypeFacts {
         TypeFacts {
+            is_public: true,
             constructors: Vec::new(),
             doc_span: None,
             name_start: fqn.len() as u32,

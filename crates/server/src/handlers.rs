@@ -6,22 +6,21 @@
 //! which is what keeps them usable from the CLI and the benchmarks.
 //!
 //! ponytail: `ServerState::view` warms a `FileSyntax` and a `ScopeTree`
-//! whichever handler asks for it, and two of them — [`folding_range`] and
-//! [`selection_range`] — never read either: the first reads only the tree, the
-//! second the tree and the document. So the first request of each kind on a
-//! never-warmed file pays one unused `FileSyntax::build` and one unused
-//! `ScopeTree::build`, and every later request on that version pays nothing
-//! because the warm view is cached. The ceiling is one wasted view build per
-//! document version whenever one of those two asks first; the upgrade is a
-//! tree-and-document accessor on `ServerState`, which has to keep the same
-//! version coherency `view` does — the four pieces come from one version or
-//! the answer is a mix — and so is a new API rather than a smaller one.
+//! whichever handler asks for it, and [`selection_range`] reads neither — only
+//! the tree and the document. A reparse arrives from the pool already warm, so
+//! the ceiling is one unused build of each on the version `didOpen` parsed,
+//! when a selection is the first thing asked of it. The upgrade is a
+//! tree-and-document accessor on `ServerState` keeping `view`'s coherency —
+//! both from one version, or the answer is a mix. [`folding_range`] reads the
+//! tree alone, which `ServerState::tree` already hands out.
 
+pub mod code_action;
 pub mod completion;
 pub mod definition;
 pub mod document_highlight;
 pub mod document_symbol;
 pub mod folding_range;
+pub mod formatting;
 pub mod hierarchy;
 pub mod hover;
 pub mod inlay_hint;
@@ -29,6 +28,7 @@ pub(crate) mod javadoc;
 #[cfg(test)]
 mod lombok_tests;
 pub mod references;
+pub mod rename;
 pub mod selection_range;
 pub mod semantic_tokens;
 pub mod type_definition;
@@ -94,18 +94,13 @@ pub(crate) fn resolve_at(
     let externals = state.externals();
     let view = state.view(id)?;
     let offset = view.document.offset_at(to_position(position));
-    // A member selection is answered from the receiver's type, an unqualified
-    // call from its enclosing type; anything else is a plain name, which the
-    // file-local query has always answered. The fallbacks are not retries:
-    // `None` from either semantic query means the cursor is not on that shape
-    // at all.
-    //
-    // ponytail: neither semantic query can distinguish "not this shape" from
-    // "this shape, and it did not resolve" — both answer `None`, so the
-    // fall-through runs in both cases. Harmless for both arms: `definition_at`
-    // has its own `is_simple_name` guard that already refuses the right-hand
-    // identifier of a field access and the name of any call, qualified or not,
-    // so it answers `None` too. No wrong jump is reachable.
+    // ponytail: `definition_in`'s semantic queries answer `None` both off
+    // their shape and on it unresolved, so an unresolved `a.b` or `go()`
+    // falls through to the file-local query. No wrong jump is reachable only
+    // because `definition_at`'s `is_simple_name` refuses a field access's
+    // right-hand name and every call's name; a step added to the chain gets
+    // no such guard. The upgrade is a three-way answer — not this shape,
+    // refused, found — so a refusal ends the chain.
     let files = javelin_semantic::Files::single(id.clone(), view.syntax, view.scopes);
     definition_in(&view, &files, &externals, offset)
 }
@@ -164,9 +159,12 @@ pub(crate) fn trusted_survey(state: &ServerState) -> Option<std::sync::Arc<javel
 /// Lombok writes past the model in — or for a name it read that a generated
 /// source, a static import or an inherited member type may mean. Every name
 /// is refused before the workspace's first walk.
+///
+/// `lombok_short` is [`inlay_hint::lombok_short`] for the view's file, asked
+/// once per request by the caller: it reads the whole file.
 pub(crate) fn unclaimable(
     view: &crate::state::FileView<'_>,
-    id: &DocumentId,
+    lombok_short: bool,
     externals: &crate::classpath::ClasspathExternals,
     survey: Option<&javelin_index::Survey>,
     offset: u32,
@@ -179,7 +177,7 @@ pub(crate) fn unclaimable(
     bodies
         .iter()
         .any(|body| body.start_byte <= offset && offset < body.end_byte)
-        || inlay_hint::lombok_short(view.syntax, view.document.text(), externals, id)
+        || lombok_short
         || survey.map_or(!written.is_empty(), |survey| {
             written.iter().any(|name| {
                 survey.generated.contains(name) || shadowed(name, view.syntax, externals)
@@ -190,7 +188,8 @@ pub(crate) fn unclaimable(
 /// The constructor the `new` whose class name is at `offset` selects, or the
 /// `this(…)` or `super(…)` whose keyword is — and, with `constants`, the enum
 /// constant whose name is — where it may be claimed: definition, hover and
-/// references ask it ahead of the type the name means.
+/// references ask it ahead of the type the name means. `lombok_short` is
+/// [`unclaimable`]'s.
 pub(crate) fn constructor_in(
     view: &crate::state::FileView<'_>,
     id: &DocumentId,
@@ -198,6 +197,7 @@ pub(crate) fn constructor_in(
     survey: Option<&javelin_index::Survey>,
     offset: u32,
     constants: bool,
+    lombok_short: bool,
 ) -> Option<javelin_semantic::SelectedConstructor> {
     let files = javelin_semantic::Files::single(id.clone(), view.syntax, view.scopes);
     let found = javelin_semantic::constructor_at(
@@ -232,10 +232,7 @@ pub(crate) fn constructor_in(
         })
     }
     let at = header(&view.syntax.declarations, offset).unwrap_or(offset);
-    // ponytail: `unclaimable` reads the file's Lombok annotations per `new`,
-    // so references over a Lombok file with many of them is that file's
-    // size times their count. The upgrade is answering it once per request.
-    (!unclaimable(view, id, externals, survey, at, &found.written)).then_some(found)
+    (!unclaimable(view, lombok_short, externals, survey, at, &found.written)).then_some(found)
 }
 
 /// The fully-qualified type the plain name under the cursor means, when the
@@ -474,17 +471,19 @@ pub(crate) fn to_position(position: lsp_types::Position) -> javelin_document::Po
 /// backslash, which a URI path never is. Percent-encoding everything outside
 /// the unreserved set on the way in makes the result parse by construction.
 ///
-/// `None` only for a path that is not UTF-8, which has no percent-encoding
+/// `None` for a path that is not UTF-8, which has no percent-encoding
 /// without knowing the platform's encoding and which the cache root cannot
-/// produce on its own.
-///
-/// ponytail: a *relative* path is given the leading slash too, so a relative
-/// `index.cacheDir` produces a URI naming the same path from the root. The
-/// jump then lands on nothing, which is the same cost as no jump; refusing one
-/// outright needs a check that is not `Path::is_absolute`, since the Windows
-/// shape has to be recognised on every platform for this to stay testable.
+/// produce on its own, and for a relative one — a relative `index.cacheDir` —
+/// which a URI would name from the root instead. Rooted is read as a string
+/// rather than through `Path::is_absolute`, so the Windows shape is
+/// recognised, and tested, on every platform.
 pub(crate) fn file_uri(path: &Path) -> Option<Uri> {
     let path = path.to_str()?;
+    let drive =
+        matches!(path.as_bytes(), [letter, b':', b'/' | b'\\', ..] if letter.is_ascii_alphabetic());
+    if !(drive || path.starts_with(['/', '\\'])) {
+        return None;
+    }
     let mut encoded = String::with_capacity(path.len());
     for byte in path.bytes() {
         match byte {

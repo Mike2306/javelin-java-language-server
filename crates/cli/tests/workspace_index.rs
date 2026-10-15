@@ -141,6 +141,76 @@ fn a_client_that_names_no_folder_gets_no_index_and_no_error() {
     finish(server);
 }
 
+/// The rename is answered from a thread of its own, so only the real binary
+/// shows its answer reaching the pipe and not holding up the exit.
+#[test]
+fn a_class_is_renamed_across_files_once_the_walk_is_whole() {
+    let workspace = Workspace::new("rename");
+    workspace.file(
+        "src/main/java/com/example/A.java",
+        "package com.example;\npublic class A {}\n",
+    );
+    let b = "package com.example;\nclass B { A a; }\n";
+    workspace.file("src/main/java/com/example/B.java", b);
+    let b_uri = uri(&workspace.0.join("src/main/java/com/example/B.java"));
+
+    let (mut server, mut logs) = Server::start_with_logs();
+    let capabilities = serde_json::json!({
+        "workspace": { "workspaceEdit": {
+            "documentChanges": true, "resourceOperations": ["rename"]
+        } }
+    });
+    let answered = server.initialize_as(&workspace.options(), workspace.uri(), capabilities);
+    assert!(answered["error"].is_null(), "initialize must succeed");
+    server.send(&serde_json::json!({ "jsonrpc": "2.0", "method": "initialized", "params": {} }));
+    server.send(&serde_json::json!({
+        "jsonrpc": "2.0", "method": "textDocument/didOpen",
+        "params": { "textDocument": {
+            "uri": b_uri, "languageId": "java", "version": 3, "text": b
+        } }
+    }));
+    assert!(
+        logs.wait_for("workspace ready", Duration::from_secs(30))
+            .is_some(),
+        "the walk never finished: {:?}",
+        logs.texts()
+    );
+
+    let answer = server.eventually(
+        "textDocument/rename",
+        &serde_json::json!({
+            "textDocument": { "uri": b_uri },
+            "position": { "line": 1, "character": 10 },
+            "newName": "Z",
+        }),
+        |answer| answer["result"]["documentChanges"].is_array(),
+    );
+    let changes = answer["result"]["documentChanges"]
+        .as_array()
+        .expect("settled on an array");
+    let edited = |name: &str| {
+        changes
+            .iter()
+            .find(|change| {
+                change["textDocument"]["uri"]
+                    .as_str()
+                    .is_some_and(|uri| uri.ends_with(name))
+            })
+            .unwrap_or_else(|| panic!("no edit of {name}: {answer}"))
+    };
+    assert_eq!(edited("B.java")["textDocument"]["version"], 3);
+    assert!(edited("A.java")["textDocument"]["version"].is_null());
+    assert!(
+        changes.iter().any(|change| change["kind"] == "rename"
+            && change["newUri"]
+                .as_str()
+                .is_some_and(|uri| uri.ends_with("/Z.java"))),
+        "A.java must become Z.java: {answer}"
+    );
+
+    finish(server);
+}
+
 /// `shutdown`, then `exit`, then the process is gone — the sequence an editor
 /// closing a window sends, and the one a background thread must not hold up.
 fn finish(mut server: Server) {

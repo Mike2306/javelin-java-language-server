@@ -48,4 +48,7 @@ public class Box<T extends Comparable<T>> implements java.io.Serializable {
     public class Inner {
         public class Deeper {}
     }
+
+    /** Public in its own class file's flags; `InnerClasses` says otherwise. */
+    protected static class Guarded {}
 }

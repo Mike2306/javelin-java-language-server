@@ -1691,6 +1691,24 @@ The wait is shown too: the walk, the build tool, the sources graft and
 the pass are LSP work-done progress, which Zed shows beside the server's
 name, so a reviewer can see when references will cross a file.
 
+## Measured on remove unused imports, 2026-10-13
+
+`benches/code_actions.rs`, new. It times a code-action request with no
+`only`, which is what an editor sends on every cursor move. The fixture
+has fifty imports and none of them is used, so the one pass over the
+file's words never stops early:
+
+| Tier | Time |
+|---|---|
+| small | 38 µs |
+| medium | 314 µs |
+| large | 2.8 ms |
+| huge | 28 ms |
+
+The first cut scanned the file once per import. On a 5 MB file the review
+measured it at 27 ms with 50 unused imports and 1.03 s with 2000. A single
+pass costs about the same whatever the import count.
+
 ## Measured on resumable inlay hints, 2026-10-13
 
 The deadline is unchanged at 20 ms. What changed is what a request

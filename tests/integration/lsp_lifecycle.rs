@@ -34,7 +34,8 @@ fn the_handshake_advertises_exactly_the_features_that_are_implemented() {
     assert_eq!(capabilities["hoverProvider"], true);
     assert!(capabilities["completionProvider"].is_object());
     assert_eq!(capabilities["referencesProvider"], true);
-    assert!(capabilities["renameProvider"].is_null());
+    assert_eq!(capabilities["renameProvider"]["prepareProvider"], true);
+    assert!(capabilities["signatureHelpProvider"].is_null());
 
     client.shutdown();
 }
@@ -91,11 +92,10 @@ fn unimplemented_requests_are_answered_rather_than_dropped() {
 
     let response = client.request(
         1,
-        lsp_types::request::Rename::METHOD,
+        lsp_types::request::SignatureHelpRequest::METHOD,
         serde_json::json!({
             "textDocument": { "uri": "file:///Simple.java" },
-            "position": { "line": 0, "character": 0 },
-            "newName": "Other"
+            "position": { "line": 0, "character": 0 }
         }),
     );
     match response.response_result {

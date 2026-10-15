@@ -408,30 +408,6 @@ impl<'a> Member<'a> {
         }
     }
 
-    /// The member's parameter types, each resolved where it was written — or
-    /// `None` when the file it was written in is not one this query can reach.
-    /// An external member always answers `Some`: a fact carries its parameter
-    /// types resolved already, so there is no file for it to be missing.
-    ///
-    /// `Option` rather than an empty list, because the two answers are not
-    /// interchangeable and the difference is a wrong pick. An empty list
-    /// excludes nothing in `apply::excluded_by_arguments`, where an empty
-    /// `zip` is no comparison at all, but in `apply::hides_the_rest` it
-    /// compares equal to every zero-parameter sibling and so would make the
-    /// candidate *hide* all of them — a refusal turned into a pick. Each
-    /// caller has to say which it means, and neither can get the dangerous one
-    /// by default.
-    ///
-    /// ponytail: resolved without the owner's substitution, so a parameter
-    /// declared `T` stays a `Type::Variable`. For exclusion that is merely
-    /// unnarrowing — an unknown excludes nothing — but for
-    /// `apply::hides_the_rest` it means a generic override whose type
-    /// parameter the subtype pinned down (`class Base<T> { void m(T t) }`
-    /// against `class A extends Base<Foo> { void m(Foo f) }`) reads as two
-    /// different parameter types and so refuses rather than shadowing. The
-    /// upgrade is to run `substitute_member` over a parameter's type as this
-    /// module already does over a member's own, which is what `subs` is here
-    /// for.
     /// Whether the type a declaration writes for parameter `index` may mean
     /// one `resolve_written`'s tiers do not see: a member type the file's
     /// types inherit, or one a static import brings in. `Entry` in a class
@@ -442,7 +418,9 @@ impl<'a> Member<'a> {
     /// which a JDK argument excludes since Tier 5's slice 3. One resolved to
     /// the JDK's — `Error` beside an inherited `Base.Error` — still excludes
     /// as it did before; gating it too costs every local overload set a
-    /// closure the world cannot show whole.
+    /// closure the world cannot show whole. The upgrade is gating the JDK's
+    /// too once `may_shadow_type` can show a file's inherited member types
+    /// whole, so that a yes is the exception rather than the default.
     pub(crate) fn parameter_may_be_shadowed(
         &self,
         index: usize,
@@ -468,6 +446,32 @@ impl<'a> Member<'a> {
         externals.may_shadow_type(first, syntax)
     }
 
+    /// The member's parameter types, each resolved where it was written — or
+    /// `None` when the file it was written in is not one this query can reach.
+    /// An external member always answers `Some`: a fact carries its parameter
+    /// types resolved already, so there is no file for it to be missing.
+    ///
+    /// `Option` rather than an empty list, because the two answers are not
+    /// interchangeable and the difference is a wrong pick. An empty list
+    /// excludes nothing in `apply::excluded_by_arguments`, where an empty
+    /// `zip` is no comparison at all, but in `apply::hides_the_rest` it
+    /// compares equal to every zero-parameter sibling and so would make the
+    /// candidate *hide* all of them — a refusal turned into a pick. Each
+    /// caller has to say which it means, and neither can get the dangerous one
+    /// by default.
+    ///
+    /// ponytail: resolved without the owner's substitution, so a parameter
+    /// declared `T` stays a `Type::Variable`. For exclusion that is merely
+    /// unnarrowing — an unknown excludes nothing — but for
+    /// `apply::hides_the_rest` it means a generic override whose type
+    /// parameter the subtype pinned down (`class Base<T> { void m(T t) }`
+    /// against `class A extends Base<Foo> { void m(Foo f) }`) reads as two
+    /// different parameter types and so refuses rather than shadowing. The
+    /// upgrade is to run `substitute_member` over a parameter's type as this
+    /// module already does over a member's own, which is what `subs` is here
+    /// for — but only with `parameter_may_be_shadowed` taught to check the
+    /// name the binding was written as, since after substitution the written
+    /// `T` is no longer what the parameter's type came from.
     pub(crate) fn parameter_types(
         &self,
         files: &Files<'_>,
@@ -583,20 +587,12 @@ fn lambda_target(ty: &ExternalType, subs: &HashMap<String, Type>) -> Type {
     }
 }
 
-/// The type of a lambda's `position`th parameter, when the lambda is the
-/// `argument`th argument of a call `member` was picked for and takes `arity`
-/// parameters: the parameter of the single abstract method of the functional
-/// interface `member` declares there.
-///
-/// `None` wherever that is not one certain type — a variadic tail, a
-/// parameter that is not an interface type, no single abstract method, an
-/// arity that does not match, or a type variable nothing bound.
+/// The functional interface a lambda passed as `argument` is read through.
 ///
 /// ponytail: a parameter typed by the method's *own* variable is unknown
-/// even where another argument binds it — `reduce(identity, (a, b) -> …)` —
-/// because `infer::bind` runs after the pick this reads. The upgrade is
+/// even where another argument binds it — `Collections.sort(list, (a, b) ->
+/// …)` — because `infer::bind` runs after the pick this reads. The upgrade is
 /// binding the non-lambda arguments first and reading this through them.
-/// The functional interface a lambda passed as `argument` is read through.
 pub(crate) fn lambda_target_at(
     member: &Member<'_>,
     argument: usize,
@@ -621,6 +617,14 @@ pub(crate) fn lambda_target_at(
     }
 }
 
+/// The type of a lambda's `position`th parameter, when the lambda is the
+/// `argument`th argument of a call `member` was picked for and takes `arity`
+/// parameters: the parameter of the single abstract method of the functional
+/// interface `member` declares there.
+///
+/// `None` wherever that is not one certain type — a variadic tail, a
+/// parameter that is not an interface type, no single abstract method, an
+/// arity that does not match, or a type variable nothing bound.
 pub(crate) fn lambda_parameter(
     member: &Member<'_>,
     argument: usize,
@@ -826,6 +830,34 @@ pub fn members_of<'a>(
     statics: bool,
 ) -> Vec<Member<'a>> {
     walk_members(ty, files, externals, statics).members
+}
+
+/// Whether the type `decl` declares in the current file exposes a member
+/// called `name`, its own or inherited, static or not — `None` where either
+/// walk may be missing one, so a caller that needs "no such member" to be
+/// true, as a rename does before it writes the name, refuses.
+///
+/// `Object`'s own names count as exposed: the walks that answer whole leave
+/// out only `Object`, and every type has its methods.
+pub fn exposes_member(
+    files: &Files<'_>,
+    externals: &dyn Externals,
+    decl: &javelin_parser::Decl,
+    name: &str,
+) -> Option<bool> {
+    if crate::queries::OBJECT_METHODS.contains(&name) {
+        return Some(true);
+    }
+    let ty = crate::infer::declared(files, decl);
+    let mut found = false;
+    for statics in [false, true] {
+        let walk = walk_members(&ty, files, externals, statics);
+        if !walk.whole_but_object {
+            return None;
+        }
+        found |= walk.members.iter().any(|member| member.name() == name);
+    }
+    Some(found)
 }
 
 /// A member list, and whether the walk that produced it reached everything the
@@ -1503,8 +1535,9 @@ fn is_member(kind: DeclKind) -> bool {
 
 /// Whether a declaration is itself a type, rather than a member that has one.
 /// Shared by `is_member` (a nested type is reachable through the outer
-/// type's name) and `is_static` (for the same reason, it is always static).
-fn is_type_kind(kind: DeclKind) -> bool {
+/// type's name) and `is_static` (for the same reason, it is always static),
+/// and by `apply::hides_the_rest`, since a type never hides a variable.
+pub(crate) fn is_type_kind(kind: DeclKind) -> bool {
     matches!(
         kind,
         DeclKind::Class
@@ -2369,6 +2402,26 @@ mod tests {
             panic!("expected T substituted to Boxes, got {value_ty:?}");
         };
         assert_eq!(name, "Boxes");
+    }
+
+    #[test]
+    fn exposes_member_sees_inherited_names_and_refuses_an_unknown_supertype() {
+        let source = "class A extends B { private int a; } class B { static int b; }";
+        let (syntax, scopes) = parts(source);
+        let files = set(&syntax, &scopes);
+        let a = &syntax.declarations[0];
+        assert_eq!(exposes_member(&files, &NoExternals, a, "b"), Some(true));
+        assert_eq!(exposes_member(&files, &NoExternals, a, "a"), Some(true));
+        assert_eq!(exposes_member(&files, &NoExternals, a, "c"), Some(false));
+        assert_eq!(
+            exposes_member(&files, &NoExternals, a, "hashCode"),
+            Some(true)
+        );
+
+        let (syntax, scopes) = parts("class A extends Missing { }");
+        let files = set(&syntax, &scopes);
+        let a = &syntax.declarations[0];
+        assert_eq!(exposes_member(&files, &NoExternals, a, "c"), None);
     }
 
     #[test]

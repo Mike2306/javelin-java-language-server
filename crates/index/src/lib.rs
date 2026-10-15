@@ -194,7 +194,9 @@ use rusqlite::Connection;
 /// To 45 because a generic type's `@Builder` is generated now, and a call's
 /// written type arguments bind its method's own variables, so the worker
 /// follows chains it stopped at.
-pub const SCHEMA_VERSION: i32 = 45;
+/// To 46 because a type's fact says whether it is public, which the
+/// add-import quick fix offers only those of.
+pub const SCHEMA_VERSION: i32 = 46;
 
 /// A handle to one persistent cache file.
 ///

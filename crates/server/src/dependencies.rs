@@ -497,7 +497,7 @@ fn jar_facts(
 }
 
 /// A file's modification time and size: what says it is the one read before.
-fn stamp(path: &Path) -> String {
+pub(crate) fn stamp(path: &Path) -> String {
     std::fs::metadata(path)
         .map(|metadata| {
             let modified = metadata

@@ -96,15 +96,18 @@ pub fn simple_name(
     }
 
     // ponytail: JLS 7.5.2 makes the implicit `java.lang.*` an on-demand
-    // import at the same rank as an explicit one, which would make any
-    // clash between `java.lang.X` and an explicitly on-demand-imported X
-    // ambiguous. Ranking `java.lang` below matches what javac accepts in
-    // practice and keeps every tier guess-free on its own; the upgrade, if a
-    // real file ever needs it, is to model 7.5.2's rank exactly.
+    // import at the same rank as an explicit one, so javac rejects a clash
+    // between `java.lang.X` and an on-demand-imported X as ambiguous — what
+    // `java.lang.Record` did to `import org.jooq.*;`. Ranking `java.lang`
+    // below answers the explicit import instead: what such a file meant, but
+    // an answer where javac has none. The upgrade is one tier for both, which
+    // changes stored rows and so needs a `javelin_index::SCHEMA_VERSION` bump.
     let on_demand_imports: Vec<String> = imports
         .iter()
-        // ponytail: `import static a.B.C;` can name a nested type `B.C`;
-        // static imports are ignored here, so that shape is not seen.
+        // ponytail: `import static a.B.C;` and `import static a.B.*;` can name
+        // a nested type, and neither is read, so such a name is `Unknown`. The
+        // upgrade is counting each in its non-static tier once `table` confirms
+        // the type — a stored-rows change, so a schema bump.
         .filter(|import| !import.is_static && import.is_on_demand)
         .map(|import| format!("{}.{first}", import.name))
         .filter(|candidate| table.contains(candidate))

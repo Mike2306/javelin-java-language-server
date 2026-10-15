@@ -79,6 +79,14 @@ fn sees(world: &TypeWorld, scope: Option<&Scope>, fqn: &str) -> bool {
     scope.is_none_or(|scope| world.is_platform(fqn) || scope.sees(fqn))
 }
 
+/// The fqns of the types `fqn` may be nested in, innermost first:
+/// `a.B.C` gives `a.B`, then `a`, which no type is and every lookup skips.
+fn outers(fqn: &str) -> impl Iterator<Item = &str> {
+    std::iter::successors(fqn.rsplit_once('.').map(|(outer, _)| outer), |outer| {
+        outer.rsplit_once('.').map(|(outer, _)| outer)
+    })
+}
+
 /// The engine's window onto whatever classpath has arrived, and onto whatever
 /// the workspace walk has found.
 ///
@@ -189,6 +197,53 @@ impl ClasspathExternals {
             extended: Arc::default(),
             ..self.clone()
         }
+    }
+
+    /// Every type called `simple` a file of this window may import: public, in
+    /// every type it is nested in too, and on the window's classpath, sorted.
+    ///
+    /// ponytail: the JDK's exported packages are told apart by name — the
+    /// standard prefixes, which JDK 21 exports every package under but the
+    /// AWT peers — so an exported `com.sun` or `jdk` package is never offered.
+    /// The upgrade is reading `module-info`'s `exports`. And a workspace type
+    /// is offered from any source set, a test one to main code too, as
+    /// resolution treats them; the upgrade is source sets per module.
+    pub(crate) fn importable(&self, simple: &str) -> Vec<String> {
+        const EXPORTED: [&str; 5] = ["java.", "javax.", "org.w3c.", "org.xml.", "org.ietf."];
+        let world_public = |fqn: &str| {
+            self.world.facts(fqn).is_some_and(|fact| fact.is_public)
+                && outers(fqn)
+                    .all(|outer| self.world.facts(outer).is_none_or(|fact| fact.is_public))
+        };
+        let workspace_public = |fqn: &str| {
+            let public = |fqn: &str| {
+                let mut types = self.workspace.with_fqn(fqn).peekable();
+                types.peek().is_none() || types.all(|ty| ty.is_public)
+            };
+            self.workspace.with_fqn(fqn).next().is_some() && public(fqn) && outers(fqn).all(public)
+        };
+        let mut found: Vec<String> = self
+            .world
+            .named(simple)
+            .map(|fact| fact.fqn.as_str())
+            .filter(|fqn| world_public(fqn) && sees(&self.world, self.scope.as_deref(), fqn))
+            .filter(|fqn| {
+                !self.world.is_platform(fqn)
+                    || (EXPORTED.iter().any(|p| fqn.starts_with(p)) && !fqn.contains(".peer."))
+            })
+            .chain(
+                self.workspace
+                    .with_simple_name(simple)
+                    .map(|ty| ty.fqn.as_str())
+                    .filter(|fqn| workspace_public(fqn)),
+            )
+            // A type in the unnamed package cannot be imported.
+            .filter(|fqn| fqn.contains('.'))
+            .map(str::to_owned)
+            .collect();
+        found.sort();
+        found.dedup();
+        found
     }
 }
 
@@ -1386,6 +1441,7 @@ impl Classpath {
 #[cfg(test)]
 pub(crate) fn fact(fqn: &str) -> javelin_classpath::TypeFacts {
     javelin_classpath::TypeFacts {
+        is_public: true,
         constructors: Vec::new(),
         doc_span: None,
         name_start: 0,
@@ -1415,6 +1471,7 @@ fn declaring(
     members: Vec<MemberFacts>,
 ) -> javelin_classpath::TypeFacts {
     javelin_classpath::TypeFacts {
+        is_public: true,
         name_start: 0,
         name_end: 0,
         kind,
@@ -1712,12 +1769,19 @@ fn open_cache(config: &Config) -> Option<CacheDb> {
 /// One function so the writer, the reader and `doctor` cannot disagree about
 /// what identifies a JDK — a mismatch here silently re-reads `src.zip` on
 /// every start, which is eleven seconds nobody would look for.
+///
+/// The version carries `src.zip`'s modification time and size after the
+/// feature number: a patch-level JDK replaced in place keeps its home and
+/// its feature, and only the archive says its offsets moved.
 fn identity(jdk: &Jdk) -> (String, String) {
-    (
-        jdk.home.to_string_lossy().into_owned(),
-        jdk.version
-            .map_or_else(|| "unknown".to_owned(), |version| version.to_string()),
-    )
+    let feature = jdk
+        .version
+        .map_or_else(|| "unknown".to_owned(), |version| version.to_string());
+    let version = match &jdk.sources {
+        Some(src_zip) => format!("{feature}+{}", crate::dependencies::stamp(src_zip)),
+        None => feature,
+    };
+    (jdk.home.to_string_lossy().into_owned(), version)
 }
 
 fn stores(db: &CacheDb, home: &str, version: &str) -> bool {
@@ -1837,6 +1901,7 @@ mod tests {
     /// definition handler's question rather than this door's.
     fn source_type(fqn: &str) -> javelin_index::WorkspaceType {
         javelin_index::WorkspaceType {
+            is_public: true,
             doc_span: None,
             fqn: fqn.to_owned(),
             simple: fqn.rsplit('.').next().unwrap_or(fqn).to_owned(),
@@ -1891,6 +1956,27 @@ mod tests {
             is_on_demand: true,
             ..import(name)
         }
+    }
+
+    #[test]
+    fn importable_offers_public_workspace_types_outside_the_unnamed_package() {
+        let mut types: Vec<_> = [
+            "com.a.Widget",
+            "com.b.Hidden",
+            "com.b.Hidden.Widget",
+            "com.c.Widget",
+            "Widget",
+        ]
+        .into_iter()
+        .map(source_type)
+        .collect();
+        types[1].is_public = false;
+        types[3].is_public = false;
+        let externals = ClasspathExternals::new(
+            Classpath::hand_built(&[]).world,
+            Arc::new(WorkspaceIndex::new(types)),
+        );
+        assert_eq!(externals.importable("Widget"), ["com.a.Widget"]);
     }
 
     #[test]
@@ -2310,6 +2396,7 @@ mod tests {
         );
         let generic =
             |fqn: &str, parameter: &str, members: Vec<MemberFacts>| javelin_classpath::TypeFacts {
+                is_public: true,
                 type_parameters: vec![parameter.to_owned()],
                 ..declaring(fqn, DeclKind::Class, &["java.lang.Object"], members)
             };
@@ -2497,6 +2584,7 @@ mod tests {
         );
         let generic =
             |fqn: &str, parameter: &str, members: Vec<MemberFacts>| javelin_classpath::TypeFacts {
+                is_public: true,
                 type_parameters: vec![parameter.to_owned()],
                 ..declaring(fqn, DeclKind::Class, &["java.lang.Object"], members)
             };
@@ -3260,6 +3348,28 @@ class A {{ void f(Logger log, Object a, \
         assert!(receiver.try_recv().is_err(), "another JDK was read instead");
     }
 
+    /// `brew upgrade openjdk@21` keeps the home and the feature version; the
+    /// cached facts' offsets are the old archive's all the same.
+    #[test]
+    fn a_jdk_patched_in_place_is_another_identity() {
+        let home = std::env::temp_dir().join(format!("javelin-identity-{}", std::process::id()));
+        std::fs::create_dir_all(home.join("lib")).expect("temp dir");
+        let src_zip = home.join("lib").join("src.zip");
+        std::fs::write(&src_zip, b"21.0.1").expect("the old archive");
+        let jdk = Jdk {
+            home: home.clone(),
+            version: Some(21),
+            sources: Some(src_zip.clone()),
+        };
+        let before = identity(&jdk);
+        std::fs::write(&src_zip, b"21.0.2+13").expect("the patched archive");
+        let after = identity(&jdk);
+        std::fs::remove_dir_all(&home).ok();
+        assert_eq!(before.0, after.0);
+        assert_ne!(before.1, after.1);
+        assert!(before.1.starts_with("21+"), "{}", before.1);
+    }
+
     #[test]
     fn a_types_own_members_are_returned_for_a_name_the_world_holds() {
         let externals = over(vec![declaring(
@@ -3375,6 +3485,7 @@ class A {{ void f(Logger log, Object a, \
         members: Vec<MemberFacts>,
     ) -> javelin_classpath::TypeFacts {
         javelin_classpath::TypeFacts {
+            is_public: true,
             name_start: 0,
             name_end: 0,
             type_parameters: parameters.iter().map(|name| (*name).to_owned()).collect(),
@@ -3752,6 +3863,7 @@ class A {{ void f(Logger log, Object a, \
                     Vec::new()
                 };
                 javelin_classpath::TypeFacts {
+                    is_public: true,
                     name_start: 0,
                     name_end: 0,
                     supertypes,

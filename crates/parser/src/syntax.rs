@@ -807,7 +807,9 @@ impl Builder<'_> {
     /// ponytail: everything found lands in one flat list per enclosing member,
     /// so a local declared inside a lambda or an `if` is reported at method
     /// level. The outline wants exactly that; `ScopeTree`, which does need block
-    /// structure, has its own walk in `scopes.rs`.
+    /// structure, has its own walk in `scopes.rs`. Nest them by block only if
+    /// a reader other than the outline must know which block a local is in —
+    /// until then the scope tree is the one to ask.
     fn statements(&self, node: Node<'_>, out: &mut Vec<Decl>, depth: u32) {
         if depth > MAX_DEPTH {
             return;

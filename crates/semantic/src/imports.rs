@@ -256,7 +256,10 @@ fn lombok_name<'a>(written: &'a str, imports: &[ImportDecl]) -> Option<&'a str> 
 /// `lombok.experimental`.
 ///
 /// ponytail: one written fully qualified, `@lombok.experimental.Delegate`
-/// with no import, is not seen. The upgrade is reading the modifiers.
+/// with no import, is not seen here, and only `may_generate` sees it on the
+/// enclosing types' own members. The upgrade is reading every declaration's
+/// modifiers, which is file-sized, so it belongs in `FileSyntax` built once
+/// and not on this request-path check.
 fn may_rewrite(syntax: &FileSyntax) -> bool {
     syntax.imports.iter().any(|import| {
         import.name.starts_with("lombok.experimental")

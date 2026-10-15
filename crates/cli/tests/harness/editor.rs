@@ -22,18 +22,6 @@ pub fn demo_project() -> PathBuf {
         .expect("the demo project is checked in")
 }
 
-/// A `file:` URI for an absolute path.
-///
-/// `format!("file://{}", path.display())` is wrong twice. A canonicalised
-/// Windows path is `\\?\C:\…`, which is not a URI at all, so `lsp-types`
-/// refuses to deserialise the notification and the server drops it silently —
-/// on a CI matrix that includes `windows-latest`, that is every editor test
-/// failing for a reason none of them names. And on Unix a checkout directory
-/// containing a space or a `#` breaks the naive form too.
-//
-// ponytail: encodes the four characters a checkout path plausibly holds rather
-// than the grammar of RFC 8089. The upgrade is the `url` crate, which this
-// workspace does not depend on and which one test helper does not justify.
 /// A copy of the demo project under the temp directory, for a check that
 /// writes files: the checked-in project is never written to. The copy is
 /// fresh for every call and left for the OS to clean up.
@@ -55,6 +43,18 @@ pub fn scratch_project(name: &str) -> PathBuf {
     root
 }
 
+/// A `file:` URI for an absolute path.
+///
+/// `format!("file://{}", path.display())` is wrong twice. A canonicalised
+/// Windows path is `\\?\C:\…`, which is not a URI at all, so `lsp-types`
+/// refuses to deserialise the notification and the server drops it silently —
+/// on a CI matrix that includes `windows-latest`, that is every editor test
+/// failing for a reason none of them names. And on Unix a checkout directory
+/// containing a space or a `#` breaks the naive form too.
+//
+// ponytail: encodes the four characters a checkout path plausibly holds rather
+// than the grammar of RFC 8089. The upgrade is the `url` crate, which this
+// workspace does not depend on and which one test helper does not justify.
 pub fn file_uri(path: &Path) -> String {
     let raw = path.to_string_lossy();
     let raw = raw.strip_prefix(r"\\?\").unwrap_or(&raw).replace('\\', "/");

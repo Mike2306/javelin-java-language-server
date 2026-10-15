@@ -12,13 +12,15 @@
 //! name's: the index stores lines and characters for names only.
 //!
 //! ponytail: every position here is the index's, a quarter-second behind the
-//! buffer after an edit — and a dependent that is an open, dirty buffer has
-//! its references re-resolved from disk while its members come from the
-//! buffer, so a call can be grouped under the wrong member until its next
-//! edit. The upgrade is the one references names for its indexed half.
-//! Implementation on a JDK or JAR *method* answers nothing: its overrides
-//! would need that member's site, which a class-file fact does not have and
-//! a JDK one keys by entry rather than by workspace path.
+//! buffer after an edit, and an item's key is a byte offset; the upgrade is
+//! the owner, name and signature key `Target::Member` names. A dependent that
+//! is an open, dirty buffer has its references re-resolved from disk while
+//! its members come from the buffer, so a call can be grouped under the wrong
+//! member until its next edit; the upgrade is the worker re-resolving it from
+//! the buffer, where `workspace.rs` marks it. Implementation on a JDK or JAR
+//! *method* answers nothing: its overrides would need that member's site,
+//! which a class-file fact does not have and a JDK one keys by entry rather
+//! than by workspace path.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -356,8 +358,10 @@ pub fn prepare_call_hierarchy(
 /// Every recorded use of the item's member, grouped by the member each is
 /// written inside — or the type, for a use outside every member.
 ///
-/// ponytail: a JDK or JAR method's callers are not listed, because calls into
-/// them are not recorded; the upgrade is the one `member_refs.rs` names.
+/// ponytail: a JDK or JAR method has no item to ask with — `prepare` builds
+/// one from a workspace member only — so the calls `member_refs.rs` records
+/// under `library_key` are never listed here. The upgrade is an item sited
+/// where `definition::sited` places such a member, keyed by `library_key`.
 ///
 /// ponytail: exact, where references follow `hierarchy::override_line` — a
 /// call through an override is not an incoming call of the interface method.
@@ -402,8 +406,10 @@ pub fn incoming_calls(
 /// Every recorded use inside the item's own declaration, grouped by the
 /// member it lands on.
 ///
-/// ponytail: calls into the JDK or a JAR are not recorded, so they are not
-/// outgoing calls here.
+/// ponytail: a call into a JAR, or into a JDK type the workspace extends, is
+/// recorded under `library_key` and dropped here, having no workspace member
+/// to build an item from; the rest of the JDK is not recorded at all. The
+/// upgrade is the library item `incoming_calls` names.
 pub fn outgoing_calls(
     state: &mut ServerState,
     params: &CallHierarchyOutgoingCallsParams,

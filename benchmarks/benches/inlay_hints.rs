@@ -54,7 +54,18 @@ fn inlay_hints(c: &mut Criterion) {
         let mut state = ServerState::new(Config::default()).expect("engine");
         state.did_open(DocumentId::new(URI), 1, source);
         let screen = params(60);
-        let (calls, types) = hints(&mut state, &params(lines));
+        // The deadline may cut the first, cold request short on a slow
+        // machine — an unoptimised `cargo test` on a CI runner stops the
+        // huge tier after one type hint. Each request moves the memo on, so
+        // ask again, as a client scrolling the file would.
+        let mut answered = (0, 0);
+        for _ in 0..1_000 {
+            answered = hints(&mut state, &params(lines));
+            if answered.0 > 0 && answered.1 > 0 {
+                break;
+            }
+        }
+        let (calls, types) = answered;
         assert!(
             calls > 0 && types > 0,
             "{} produced {calls} parameter and {types} type hints, so a row would time nothing",

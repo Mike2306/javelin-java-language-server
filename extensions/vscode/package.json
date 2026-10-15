@@ -35,6 +35,17 @@
           "type": "boolean",
           "default": true,
           "description": "Index the workspace in the background after startup."
+        },
+        "javelin.format.command": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "A formatter reading the file on stdin and writing it to stdout, e.g. [\"google-java-format\", \"-\"]. Empty: no formatting."
+        },
+        "javelin.format.timeoutMs": {
+          "type": "number",
+          "default": 10000,
+          "description": "How long one formatter run may take."
         }
       }
     }
