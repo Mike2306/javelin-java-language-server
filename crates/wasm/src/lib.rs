@@ -16,7 +16,6 @@
 #![allow(unsafe_code)]
 
 use std::cell::RefCell;
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use javelin_classpath::{TypeFacts, TypeWorld};
@@ -102,7 +101,6 @@ fn complete(request: &[u8]) -> Result<Answer, String> {
         let scopes = ScopeTree::build(&document, &tree);
         let files = Files::single(id, &syntax, &scopes);
 
-        let mut seen = HashSet::new();
         let found = javelin_semantic::member_completions_at(
             &document,
             &tree,
@@ -113,15 +111,9 @@ fn complete(request: &[u8]) -> Result<Answer, String> {
 
         Ok(match found {
             Some(found) => Answer {
-                // A type lists the members it inherits next to the ones it overrides, so
-                // `String` offers `length()` twice, from itself and from `CharSequence`. Same
-                // name and signature is one entry to the person typing.
                 items: found
                     .candidates
                     .into_iter()
-                    .filter(|candidate| {
-                        seen.insert((candidate.name.clone(), candidate.detail.clone()))
-                    })
                     .map(|candidate| Item {
                         label: candidate.name,
                         kind: kind(candidate.kind),
@@ -254,5 +246,61 @@ mod tests {
 
         // A cursor that is not after a dot offers nothing: the host keeps its own words.
         assert!(ask(text, 3, 8).items.is_empty());
+    }
+
+    fn put(bytes: &[u8]) -> *mut u8 {
+        let pointer = hx_alloc(bytes.len());
+
+        // SAFETY: `hx_alloc(len)` returned `len` writable bytes
+        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), pointer, bytes.len()) };
+
+        pointer
+    }
+
+    /// What a host does, through the C ABI alone: fill buffers the module allocated, call, read the
+    /// length-prefixed answer, free every buffer with the length it was given.
+    #[test]
+    fn the_c_abi_round_trips_a_buffer() {
+        let facts = facts();
+        let loaded = put(&facts);
+
+        // SAFETY: `loaded` holds `facts.len()` bytes from `hx_alloc`, freed once
+        unsafe {
+            assert_eq!(hx_load(loaded, facts.len()), 0);
+            hx_free(loaded, facts.len());
+        }
+
+        let request = serde_json::json!({
+            "text": "class A {\n    void run() {\n        String name = \"x\";\n        name.\n    }\n}\n",
+            "line": 3,
+            "character": 13,
+        })
+        .to_string();
+        let input = put(request.as_bytes());
+
+        // SAFETY: the answer is `[u32 LE length][JSON]`, `4 + length` bytes from `hx_alloc`'s allocator
+        let answer = unsafe {
+            let output = hx_complete(input, request.len());
+            hx_free(input, request.len());
+
+            let length =
+                u32::from_le_bytes(std::slice::from_raw_parts(output, 4).try_into().unwrap())
+                    as usize;
+            let json = std::slice::from_raw_parts(output.add(4), length).to_vec();
+            hx_free(output, 4 + length);
+
+            json
+        };
+        let answer: serde_json::Value =
+            serde_json::from_slice(&answer).expect("the answer is JSON");
+        let labels: Vec<_> = answer["items"]
+            .as_array()
+            .expect("items")
+            .iter()
+            .map(|item| item["label"].as_str().expect("label"))
+            .collect();
+
+        assert!(labels.contains(&"length"), "{labels:?}");
+        assert_eq!(answer["complete"], true);
     }
 }
