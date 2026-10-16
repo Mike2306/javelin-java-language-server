@@ -67,7 +67,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       CC_wasm32_wasip1: clang
-      CFLAGS_wasm32_wasip1: --sysroot=/usr
+      # Debian's wasi-libc keeps its headers under wasm32-wasi, not wasm32-wasip1
+      CFLAGS_wasm32_wasip1: -isystem /usr/include/wasm32-wasi
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
