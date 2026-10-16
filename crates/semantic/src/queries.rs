@@ -16,11 +16,11 @@
 
 use javelin_document::TextDocument;
 use javelin_parser::{
-    Candidate, Definition, DefinitionKind, ScopeTree, Selection, SelectionKind, Span, SyntaxTree,
-    member_selection_at, signature_of, unqualified_call_at,
+    Candidate, DeclKind, Definition, DefinitionKind, ScopeTree, Selection, SelectionKind, Span,
+    SyntaxTree, member_selection_at, signature_of, unqualified_call_at,
 };
 
-use crate::externals::{ExternalSite, Externals};
+use crate::externals::{ExternalMember, ExternalSite, ExternalType, Externals};
 use crate::files::{FileId, Files};
 use crate::infer::{Access, call_owner, sole_candidate, type_of};
 use crate::members::{Member, MemberWalk, walk_members};
@@ -49,10 +49,13 @@ pub fn member_completions_at(
 ) -> Option<MemberCompletions> {
     let selection = member_selection_at(document, tree, offset)?;
     let found = visible_members(&selection, files, externals);
-    let candidates: Vec<Candidate> = found
+    let named: Vec<_> = found
         .members
         .into_iter()
         .filter(|member| member.name().starts_with(&selection.prefix))
+        .collect();
+    let candidates: Vec<Candidate> = without_overridden(named)
+        .into_iter()
         .take(MAX_CANDIDATES)
         .map(|member| candidate(document, tree, files.current(), &member))
         .collect();
@@ -63,6 +66,58 @@ pub fn member_completions_at(
         complete: found.complete && candidates.len() < MAX_CANDIDATES,
         candidates,
     })
+}
+
+/// A type lists the members it inherits next to the ones it overrides, so `String` offered `length()`
+/// twice, once from itself and once from `CharSequence`, and `equals` once per supertype that declares
+/// one. For the person typing that is one entry, so an external method is dropped when a method before
+/// it in the walk, which is the more derived one, has the same name and the same parameter types.
+///
+/// Only a fact is judged, because only a fact has parameter types as data rather than as text in some
+/// buffer, and only when neither side's types leave any doubt: a type variable means something else in
+/// the declaration it was written in, and an unresolved name may be two different types, so such a
+/// method is kept. Keeping a duplicate is the cheaper mistake; hiding an overload is not.
+fn without_overridden<'a>(members: Vec<Member<'a>>) -> Vec<Member<'a>> {
+    // Parameter names, return types and the declaring type play no part: Java's rule for one method
+    // overriding another is the name and the parameter types, and a covariant return is still an override.
+    fn same_method(a: &ExternalMember, b: &ExternalMember) -> bool {
+        a.name == b.name
+            && a.is_static == b.is_static
+            && a.parameters == b.parameters
+            && a.variadic == b.variadic
+    }
+
+    fn settled(ty: &ExternalType) -> bool {
+        match ty {
+            ExternalType::Void | ExternalType::Primitive(_) | ExternalType::Class(_) => true,
+            ExternalType::Parameterized(_, arguments) => arguments.iter().all(settled),
+            ExternalType::Extends(bound) | ExternalType::Super(bound) => settled(bound),
+            ExternalType::Variable(_) | ExternalType::Unresolved(_) => false,
+        }
+    }
+
+    // Methods only: a field of the same name in a subtype hides, it does not override
+    fn judged<'m>(member: &'m Member<'_>) -> Option<&'m ExternalMember> {
+        member
+            .external()
+            .filter(|fact| fact.kind == DeclKind::Method && fact.parameters.iter().all(settled))
+    }
+
+    let mut kept: Vec<Member<'a>> = Vec::with_capacity(members.len());
+
+    for member in members {
+        let overridden = judged(&member).is_some_and(|fact| {
+            kept.iter()
+                .filter_map(judged)
+                .any(|earlier| same_method(earlier, fact))
+        });
+
+        if !overridden {
+            kept.push(member);
+        }
+    }
+
+    kept
 }
 
 /// What can be completed after a `.`, and whether that is the whole of it.
@@ -3102,5 +3157,143 @@ mod tests {
         assert!(constructor(source, &world(uncertain.clone())).is_none());
         uncertain.certain = true;
         assert!(constructor(source, &world(uncertain)).is_some());
+    }
+
+    /// A world where `p.Sub` extends `java.lang.Object`. A world answers a type's members as its own
+    /// closure, the type's own first and then what it inherits, which is what the walk lists, so one
+    /// list stands for both.
+    fn override_world(sub: Vec<ExternalMember>, object: Vec<ExternalMember>) -> World {
+        World::default().with(
+            "p.Sub",
+            &["java.lang.Object"],
+            sub.into_iter().chain(object).collect(),
+        )
+    }
+
+    fn details(members: &MemberCompletions) -> Vec<String> {
+        members
+            .candidates
+            .iter()
+            .map(|candidate| candidate.detail.clone().unwrap_or_default())
+            .collect()
+    }
+
+    #[test]
+    fn a_method_a_subtype_overrides_is_offered_once() {
+        const OBJECT: &str = "java.lang.Object";
+        let object = || ExternalType::Class(OBJECT.to_owned());
+        let sub = || ExternalType::Class("p.Sub".to_owned());
+        let int = || ExternalType::Primitive(crate::Primitive::Int);
+        // The same method with its parameter named differently, and a covariant return.
+        let mut equals_object = method(
+            OBJECT,
+            "equals",
+            ExternalType::Primitive(crate::Primitive::Boolean),
+            vec![object()],
+        );
+        equals_object.parameter_names = vec!["obj".to_owned()];
+        let mut equals_sub = method(
+            "p.Sub",
+            "equals",
+            ExternalType::Primitive(crate::Primitive::Boolean),
+            vec![object()],
+        );
+        equals_sub.parameter_names = vec!["other".to_owned()];
+        let world = override_world(
+            vec![
+                equals_sub,
+                method("p.Sub", "copy", sub(), vec![]),
+                method("p.Sub", "size", int(), vec![]),
+            ],
+            vec![
+                equals_object,
+                method(OBJECT, "copy", object(), vec![]),
+                method(OBJECT, "hashCode", int(), vec![]),
+            ],
+        );
+
+        let found = offered("class A { void m(Sub s) { s.| } }", &world);
+
+        // The more derived declaration is the one that stays, and what only the supertype has still shows
+        assert_eq!(names(&found), vec!["equals", "copy", "size", "hashCode"]);
+        assert_eq!(
+            details(&found),
+            vec![
+                "boolean equals(Object other)",
+                "Sub copy()",
+                "int size()",
+                "int hashCode()"
+            ]
+        );
+    }
+
+    #[test]
+    fn overloads_are_all_offered() {
+        let int = || ExternalType::Primitive(crate::Primitive::Int);
+        let string = || ExternalType::Class("java.lang.String".to_owned());
+        let world = override_world(
+            vec![
+                method("p.Sub", "f", int(), vec![int()]),
+                method("p.Sub", "f", int(), vec![string()]),
+                // The same simple name in two packages is two types, and the facts say which
+                method(
+                    "p.Sub",
+                    "g",
+                    int(),
+                    vec![ExternalType::Class("a.Foo".to_owned())],
+                ),
+                method(
+                    "p.Sub",
+                    "g",
+                    int(),
+                    vec![ExternalType::Class("b.Foo".to_owned())],
+                ),
+            ],
+            vec![],
+        );
+
+        let found = offered("class A { void m(Sub s) { s.| } }", &world);
+
+        assert_eq!(names(&found), vec!["f", "f", "g", "g"]);
+    }
+
+    #[test]
+    fn a_method_whose_types_leave_doubt_is_kept_even_when_it_looks_overridden() {
+        // `T` is the type variable of the declaration it was written in, so `h(T)` of a subtype and of
+        // a supertype may be two different methods; an unresolved name may be two different types.
+        let int = || ExternalType::Primitive(crate::Primitive::Int);
+        let variable = || ExternalType::Variable("T".to_owned());
+        let unresolved = || ExternalType::Unresolved("Mystery".to_owned());
+        let world = override_world(
+            vec![
+                method("p.Sub", "h", int(), vec![variable()]),
+                method("p.Sub", "k", int(), vec![unresolved()]),
+            ],
+            vec![
+                method("java.lang.Object", "h", int(), vec![variable()]),
+                method("java.lang.Object", "k", int(), vec![unresolved()]),
+            ],
+        );
+
+        let found = offered("class A { void m(Sub s) { s.| } }", &world);
+
+        assert_eq!(names(&found), vec!["h", "k", "h", "k"]);
+    }
+
+    #[test]
+    fn a_static_method_and_an_instance_method_of_one_name_are_not_one() {
+        let int = || ExternalType::Primitive(crate::Primitive::Int);
+        let mut hidden = method("java.lang.Object", "of", int(), vec![int()]);
+        hidden.is_static = true;
+        let world = override_world(
+            vec![method("p.Sub", "of", int(), vec![int()])],
+            vec![hidden],
+        );
+
+        // `s.` offers the instance half only, so the static one is absent either way: no override
+        // judgement is made across the two, and the instance method stays.
+        let found = offered("class A { void m(Sub s) { s.| } }", &world);
+
+        assert_eq!(names(&found), vec!["of"]);
     }
 }
