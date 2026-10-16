@@ -57,6 +57,27 @@ jobs:
       - name: Serde feature
         run: cargo test -p javelin-classpath --features serde
 
+  # The crates from the parser down to the index also build for WASI, which has no
+  # threads (`CacheDb` walks the workspace sequentially there). Only `cargo check`: it
+  # is what keeps a change to `read_facts` or `store_facts` from breaking that path
+  # unnoticed. tree-sitter's grammar and the bundled SQLite are C, so this needs a
+  # compiler that targets WASI and its libc headers.
+  wasm:
+    name: Check (wasm32-wasip1)
+    runs-on: ubuntu-latest
+    env:
+      CC_wasm32_wasip1: clang
+      # Debian's wasi-libc keeps its headers under wasm32-wasi, not wasm32-wasip1
+      CFLAGS_wasm32_wasip1: -isystem /usr/include/wasm32-wasi
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      # Inside the checkout, so the target lands on the toolchain `rust-toolchain.toml` picks
+      - run: rustup target add wasm32-wasip1
+      - run: sudo apt-get update && sudo apt-get install -y clang wasi-libc
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --target wasm32-wasip1 -p javelin-parser -p javelin-semantic -p javelin-classpath -p javelin-index
+
   docs:
     name: Docs
     runs-on: ubuntu-latest
