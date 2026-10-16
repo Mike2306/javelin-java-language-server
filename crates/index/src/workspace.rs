@@ -919,7 +919,7 @@ impl CacheDb {
         // A target with no threads, `wasm32-wasip1`, parses the same stale files
         // one after another and stores them in the same order.
         #[cfg(target_family = "wasm")]
-        {
+        if !stale.is_empty() {
             let mut parser = JavaParser::new()?;
             let mut batch: Vec<SourceFacts> = Vec::with_capacity(BATCH);
             for file in &stale {
