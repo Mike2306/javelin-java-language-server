@@ -76,7 +76,7 @@ jobs:
       - run: rustup target add wasm32-wasip1
       - run: sudo apt-get update && sudo apt-get install -y clang wasi-libc
       - uses: Swatinem/rust-cache@v2
-      - run: cargo check --target wasm32-wasip1 -p javelin-parser -p javelin-semantic -p javelin-classpath -p javelin-index
+      - run: cargo check --target wasm32-wasip1 -p javelin-parser -p javelin-semantic -p javelin-classpath -p javelin-index -p javelin-wasm
 
   docs:
     name: Docs
